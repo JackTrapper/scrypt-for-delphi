@@ -67,7 +67,8 @@
 			  Anyone is free to copy, modify, publish, use, compile, sell, or
 			  distribute this software, either in source code form or as a compiled
 			  binary, for any purpose, commercial or non-commercial, and by any
-			  means. http://unlicense.org/
+			  means.
+			  For more information, please refer to <http://unlicense.org>
 
 	References
 	==============
@@ -87,7 +88,7 @@ uses
 	SysUtils, System.Types;
 
 type
-	//As basic of a Hash interface as you can get.
+	//As basic of a Hash interface as you can get
 	IHashAlgorithm = interface(IInterface)
 		['{985B0964-C47A-4212-ADAA-C57B26F02CCD}']
 		function GetBlockSize: Integer;
@@ -122,8 +123,10 @@ type
 
 		function Integerify(const B: array of Byte; const N: Integer): Integer; //X mod N
 
-		//Let people have access to our hash functions. They've been tested and verified, and they work well.
-		//Besides, we have HMAC and PBKDF2. That's gotta be useful for someone.
+		{
+			Let people have access to our hash functions. They've been tested and verified, and they work well.
+			Besides, we have HMAC and PBKDF2. That's gotta be useful for someone.
+		}
 		class function GetHashAlgorithm(const HashAlgorithmName: string): IHashAlgorithm;
 	public
 		constructor Create;
@@ -1011,7 +1014,7 @@ end;
 function TSHA1.Finalize: TBytes;
 begin
 	Result := Self.HashFinal;
-//	Self.Initialize; //HashFinal does the burn
+//	Self.Initialize; HashFinal does the burn
 end;
 
 procedure TSHA1.Burn;
