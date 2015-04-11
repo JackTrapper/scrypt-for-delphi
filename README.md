@@ -5,6 +5,8 @@ Scrypt for Delphi
 
 It was first [described by Colin Percival in 2012](http://www.tarsnap.com/scrypt/scrypt.pdf) for the Tarsnap online backup service.
 
+![overview](./Images/Scrypt Overview.png)
+
 Sample Usage
 ----------------
 
@@ -51,5 +53,29 @@ The parts of the string are:
 
 Because the three scrypt parameters are stored in the returned string, scrypt password hashes are backwards and forwards compatible with changing the factors. It also makes Scrypt extraordinarily convenient, in that a random salt is automatically generated and stored for you (you don't have to worry about storing it in a database or retrieving it).
 
+Scrypt Operation
+============
+
+Scrypt uses three parameters to tune CPU and memory usage:
+
+- **CostFactor**: determines how many blocks will have to be allocated in memory (the memory hard factor). 
+      # of blocks = *"cost"* = N = 2^^costFactor
+      Memory required =cost*blockSize = 2^^costFactor * blockSize
+
+- **BlockSizeFactor**: determines the size of a *block* (`r`)
+      BlockSize = blockSizeFactor * 128 bytes
+
+- **ParallelizationFactor**: determines how many independant calculations have to be performed (`p`)
+
+![operation](./Images/Scrypt Operation.png)
+
+The default parameters given in the original whitepaper are:
+
+- **CostFactor (cf)**: 14 (N = 2^^14 = 16,384)
+- **Block Size Factor (r)**: 1 (blockSize = 1*128 bytes)
+- **Parallelization Factor (p)**: 1
+
+Note: Most scrypt documentation uses **Cost (N)**, which is a large value and a power of two. We adopt the BCrypt convention of expressing a **Cost Factor**, which is the log_2(Cost).
+ 
 
 Created by Ian Boyd, 4/9/2015, and released into the [public domain](http://unlicense.org/)
