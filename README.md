@@ -58,12 +58,14 @@ Scrypt Operation
 
 Scrypt uses three parameters to tune CPU and memory usage:
 
-- **CostFactor**: determines how many blocks will have to be allocated in memory (the memory hard factor). 
-      # of blocks = *"cost"* = N = 2^costFactor
-      Memory required =cost*blockSize = 2^costFactor * blockSize
+- **CostFactor**: determines how many blocks will have to be allocated in memory (the memory hard factor).  
 
-- **BlockSizeFactor**: determines the size of a *block* (`r`)
-      BlockSize = blockSizeFactor * 128 bytes
+        # of blocks = *"cost"* = N = 2^costFactor
+        Memory required =cost*blockSize = 2^costFactor * blockSize
+
+- **BlockSizeFactor**: determines the size of a *block* (`r`)     
+ 
+        BlockSize = blockSizeFactor * 128 bytes
 
 - **ParallelizationFactor**: determines how many independant calculations have to be performed (`p`)
 
@@ -71,7 +73,7 @@ Scrypt uses three parameters to tune CPU and memory usage:
 
 The default parameters given in the original whitepaper are:
 
-- **CostFactor (cf)**: 14 (N = 2^14 = 16,384)
+- **CostFactor (cf)**: 14 (N = 2<sup>14</sup> = 16,384)
 - **Block Size Factor (r)**: 1 (blockSize = 1*128 bytes)
 - **Parallelization Factor (p)**: 1
 
