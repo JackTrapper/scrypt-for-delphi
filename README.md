@@ -67,7 +67,7 @@ Scrypt uses three parameters to tune CPU and memory usage:
 
 - **ParallelizationFactor**: determines how many independant calculations have to be performed (`p`)
 
-![operation](./Images/Scrypt Operation.png)
+![operation](./Images/Operation.png)
 
 The default parameters given in the original whitepaper are:
 
