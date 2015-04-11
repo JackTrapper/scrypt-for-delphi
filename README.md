@@ -25,15 +25,15 @@ The `TScrypt` class also supports being used for password hashing (i.e. storage 
 
 - To hash a password:
 
-      hash := TScrypt.HashPassword('correct battery horse staple'); //using default cost factors
+        hash := TScrypt.HashPassword('correct battery horse staple'); //using default cost factors
     
 - To hash a password specifying your own cost factors:
 
-      hash := TScrypt.HashPassword('correct battery horse staple', 14, 8, 1); //N=2^14, r=8, p=1
+        hash := TScrypt.HashPassword('correct battery horse staple', 14, 8, 1); //N=2^14, r=8, p=1
     
 - To verify a password:
 
-      isPasswordValid := TScrypt.CheckPassword('correct battery horse stapler', expectedHash);
+        isPasswordValid := TScrypt.CheckPassword('correct battery horse stapler', expectedHash);
 
 
 By convention TScrypt outputs a password hash as string in the form:
@@ -59,8 +59,8 @@ Scrypt Operation
 Scrypt uses three parameters to tune CPU and memory usage:
 
 - **CostFactor**: determines how many blocks will have to be allocated in memory (the memory hard factor). 
-      # of blocks = *"cost"* = N = 2^^costFactor
-      Memory required =cost*blockSize = 2^^costFactor * blockSize
+      # of blocks = *"cost"* = N = 2^costFactor
+      Memory required =cost*blockSize = 2^costFactor * blockSize
 
 - **BlockSizeFactor**: determines the size of a *block* (`r`)
       BlockSize = blockSizeFactor * 128 bytes
@@ -71,7 +71,7 @@ Scrypt uses three parameters to tune CPU and memory usage:
 
 The default parameters given in the original whitepaper are:
 
-- **CostFactor (cf)**: 14 (N = 2^^14 = 16,384)
+- **CostFactor (cf)**: 14 (N = 2^14 = 16,384)
 - **Block Size Factor (r)**: 1 (blockSize = 1*128 bytes)
 - **Parallelization Factor (p)**: 1
 
