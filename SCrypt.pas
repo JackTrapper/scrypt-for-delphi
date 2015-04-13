@@ -61,6 +61,11 @@
 	Version History
 	===============
 
+	Version 1.1   20150410
+			- Support for actually verifying a password hash
+			- TODO: Do the same thing canonical scrypt.c does, and do a benchmark before generation to determine parameters.
+
+
 	Version 1.0   20150408
 			- Inital release. Public domain.  Ian Boyd.
 			  This is free and unencumbered software released into the public domain.
@@ -69,6 +74,40 @@
 			  binary, for any purpose, commercial or non-commercial, and by any
 			  means.
 			  For more information, please refer to <http://unlicense.org>
+
+	Benchmarks
+	=======================
+
+	20150412  Delphi XE6, Release, 32-bit, Intel i5-2500
+
+		|  N |  r=1 |    r=2 |    r=3 |    r=4 |    r=5 |    r=6 |     r=7 |     r=8 |     r=9 |    r=10 |   r=11 |   r=12 |    r=13 |    r=14 |    r=15 |    r=16 |
+		|----|------|--------|--------|--------|--------|--------|---------|---------|---------|---------|--------|--------|---------|---------|---------|---------|
+		|  1 |  0.2 |    0.2 |    0.2 |    0.2 |    0.2 |    0.2 |     0.3 |     0.3 |     0.3 |     0.3 |    0.4 |    0.4 |     0.4 |     0.5 |     1.3 |     1.2 |
+		|  2 |  0.2 |    0.2 |    0.2 |    0.2 |    0.2 |    0.3 |     0.3 |     0.3 |     0.3 |     0.4 |    0.4 |    0.4 |     0.4 |     0.5 |     0.5 |     0.5 |
+		|  3 |  0.2 |    0.2 |    0.2 |    0.2 |    0.2 |    0.3 |     0.3 |     0.3 |     0.4 |     0.4 |    0.4 |    0.4 |     0.5 |     0.5 |     0.5 |     0.5 |
+		|  4 |  0.2 |    0.2 |    0.2 |    0.3 |    0.3 |    1.1 |     0.4 |     1.3 |     0.6 |     0.7 |    0.6 |    0.6 |     0.7 |     0.7 |     0.7 |     0.8 |
+		|  5 |  0.2 |    0.2 |    0.3 |    0.4 |    0.4 |    0.4 |     0.5 |     0.6 |     0.6 |     0.7 |    0.8 |    0.8 |     0.9 |     0.9 |     1.0 |     1.0 |
+		|  6 |  0.2 |    0.3 |    0.4 |    0.5 |    0.6 |    0.7 |     0.9 |     0.9 |     1.0 |     1.1 |    1.2 |    1.3 |     1.4 |     1.4 |     1.6 |     1.8 |
+		|  7 |  0.4 |    0.5 |    0.8 |    0.9 |    1.1 |    1.2 |     1.4 |     1.8 |     1.8 |     2.0 |    2.2 |    2.3 |     2.5 |     2.8 |     2.8 |     3.1 |
+		|  8 |  0.6 |    1.0 |    1.3 |    1.6 |    2.0 |    2.4 |     2.7 |     3.1 |     3.5 |     3.8 |    4.2 |    7.2 |     4.5 |     4.8 |     5.5 |     6.9 |
+		|  9 |  1.1 |    1.7 |    3.1 |    6.0 |    6.2 |    4.3 |     5.2 |     5.6 |     6.3 |     6.9 |    9.5 |   11.2 |    11.5 |     9.4 |    11.8 |    10.8 |
+		| 10 |  2.0 |    3.2 |    4.8 |    6.2 |    7.8 |    8.5 |     9.6 |    11.3 |    15.7 |    18.4 |   21.1 |   21.0 |    20.9 |    20.1 |    22.9 |    23.1 |
+		| 11 |  4.0 |    6.6 |    9.1 |   18.8 |   15.4 |   16.9 |    19.5 |    27.4 |    32.6 |    27.5 |   29.9 |   34.4 |    38.1 |    45.7 |    41.6 |    48.1 |
+		| 12 |  7.6 |   14.0 |   19.9 |   25.3 |   30.0 |   34.1 |    41.6 |    49.4 |    61.9 |    58.8 |   63.5 |   73.6 |    74.6 |    83.0 |    86.4 |    92.5 |
+		| 13 | 15.3 |   27.4 |   44.4 |   52.3 |   66.7 |   80.7 |    81.3 |    97.1 |   112.3 |   126.1 |  129.1 |  143.8 |   159.3 |   164.4 |   171.1 |   175.2 |
+		| 14 | 37.3 |   51.3 |   75.4 |  101.9 |  130.5 |  149.5 |   184.1 |   195.7 |   219.6 |   258.3 |  250.7 |  280.6 |   305.9 |   324.9 |   360.2 |   370.2 |
+		| 15 | 70.3 |  118.3 |  158.4 |  196.5 |  258.6 |  315.7 |   355.7 |   393.2 |   472.8 |   501.7 |  540.8 |  619.8 |   662.0 |   685.8 |   729.9 |   791.3 |
+		| 16 | #N/A |  229.2 |  305.8 |  430.2 |  521.8 |  624.7 |   700.9 |   823.3 |   909.2 |  1013.5 | 1056.3 | 1190.5 |  1318.4 |  1412.5 |  1501.5 |  1583.2 |
+		| 17 | #N/A |  505.1 |  691.5 |  845.0 | 1010.6 | 1243.0 |  1455.5 |  1602.0 |  1798.4 |  2031.1 | 2233.9 | 2436.9 |  2698.8 |  2856.4 |  3043.1 |  3240.8 |
+		| 18 | #N/A | 1003.6 | 1415.8 | 1797.0 | 2218.8 | 2597.6 |  2995.2 |  3375.1 |  3749.6 |  4074.9 | 4360.2 | 4655.6 |  5746.6 |  5987.7 |  5804.7 |  6181.3 |
+		| 19 | #N/A | 1911.7 | 2598.0 | 3296.0 | 4151.7 | 4880.7 |  5901.3 |  6304.4 |  7150.6 |  8091.7 | 8964.8 | 9909.5 | 10450.6 | 11452.8 | 12200.7 | 12931.8 |
+		| 20 | #N/A | 4006.3 | 5673.7 | 7117.5 | 8781.7 | 9939.3 | 12146.8 | 13136.7 | 14539.6 | 16785.1 |   #mem |   #mem |    #mem |    #mem |    #mem |    #N/A |
+
+	Delphi is limited to allocating $7FFFFFFF memory using GetMem or SetLength.
+	This means that N=20,r=16 requires 128*16*2^20 = 0x80000000 bytes of memory. This exceeds the amount you can ask for in an Integer.
+	In practice, your limit in a 32-bit process will be lower, given the 2GB limit of virtual address space, and that there are
+	other things already in your address space (e.g. the application, dlls).
+
 
 	References
 	==============
@@ -105,23 +144,35 @@ type
 
 	TScrypt = class(TObject)
 	private
-		FHash: IHashAlgorithm;
+		FHash: IHashAlgorithm; //the SHA2 algorithm used by PBKDF2/HMAC
 	protected
-		function StringToBytes(const s: string): TBytes;
+		procedure BurnBytes(var data: TBytes);
+		class function StringToBytes(const s: string): TBytes;
+
+		class function Base64Encode(const data: array of Byte): string;
+		class function Base64Decode(const s: string): TBytes;
+
+		class function BsdBase64Encode(const data: array of Byte): string;
+		class function BsdBase64Decode(const s: string): TBytes;
+
+		class function Tokenize(const s: string; Delimiter: Char): TArray<string>;
+		function GenerateSalt: TBytes;
 
 		procedure XorBlockInPlace(var A; const B; Length: Integer); inline;
 
-		function PBKDF2(const Hash: IHashAlgorithm; const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
 		function HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
+		function PBKDF2(const Hash: IHashAlgorithm; const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
 
 		function Salsa20(const Input): TBytes; //four round version of Salsa20, termed Salsa20/8
 		procedure Salsa20InPlace(var Input);
 		function BlockMix(const B: array of Byte): TBytes; //mixes r 128-byte blocks
 		function ROMix(const B; BlockSize, CostFactor: Cardinal): TBytes;
 
-		function Core(const Passphrase, Salt: UnicodeString; const CostFactor, BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
+		function DeriveBytes(const Passphrase: UnicodeString; const Salt: array of Byte; const CostFactor, BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
 
-		function Integerify(const B: array of Byte; const N: Integer): Integer; //X mod N
+		procedure GetDefaultParameters(out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal);
+		function TryParseHashString(HashString: string; out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; out Salt: TBytes; out Data: TBytes): Boolean;
+		function FormatPasswordHash(const costFactor, blockSizeFactor, parallelizationFactor: Integer; const Salt, DerivedBytes: array of Byte): string;
 
 		{
 			Let people have access to our hash functions. They've been tested and verified, and they work well.
@@ -138,15 +189,11 @@ type
 		class function GetBytes(const Passphrase: UnicodeString; const Salt: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; DesiredBytes: Integer): TBytes; overload;
 
 		{
-			Scrypt is not meant for password storage; it is meant for key generation.
-			But people can still use it for password hashing.
-			Unlike Bcrypt, there is no standard representation for passwords hashed with Scrypt.
-			So we can make one, and provide the function to validate it
+			Scrypt is meant for key generation. But people still use it for password hashing.
 		}
 		class function HashPassword(const Passphrase: UnicodeString): string; overload;
-		class function HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, Parallelization: Cardinal): string; overload;
-		class function CheckPassword(const Passphrase: UnicodeString; ExpectedPassword: UnicodeString): Boolean;
-
+		class function HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string; overload;
+		class function CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: UnicodeString): Boolean;
 	end;
 
 	EScryptException = class(Exception);
@@ -154,7 +201,46 @@ type
 implementation
 
 uses
-	Windows, Math;
+	Math,
+	{$IFDEF UnitTests}ScryptTests,{$ENDIF}
+	Windows, System.Win.ComObj, Winapi.ActiveX;
+
+const
+	SCRYPT_HASH_LEN = 64; //This can be user defined - but this is the reference size
+
+	//The normal Base64 alphabet
+	Base64EncodeTable: array[0..63] of Char =
+			{ 0:} 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'+
+			{26:} 'abcdefghijklmnopqrstuvwxyz'+
+			{52:} '0123456789+/';
+
+	Base64DecodeTable: array[#0..#127] of Integer = (
+			{  0:} -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // ________________
+			{ 16:} -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // ________________
+			{ 32:} -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,  // _______________/
+			{ 48:} 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,  // 0123456789______
+			{ 64:} -1,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,  // _ABCDEFGHIJKLMNO
+			{ 80:} 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,  // PQRSTUVWXYZ_____
+			{ 96:} -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,  // _abcdefghijklmno
+			{113:} 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1); // pqrstuvwxyz_____
+
+	//Unix password file use non-standard base64 alphabet
+	BsdBase64EncodeTable: array[0..63] of Char =
+			{ 0:} './'+
+			{ 2:} 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'+
+			{28:} 'abcdefghijklmnopqrstuvwxyz'+
+			{54:} '0123456789';
+
+	BsdBase64DecodeTable: array[#0..#127] of Integer = (
+			{  0:} -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // ________________
+			{ 16:} -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // ________________
+			{ 32:} -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  0,  1,  // ______________./
+			{ 48:} 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, -1, -1, -1, -1, -1, -1,  // 0123456789______
+			{ 64:} -1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16,  // _ABCDEFGHIJKLMNO
+			{ 80:} 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, -1, -1, -1, -1, -1,  // PQRSTUVWXYZ_____
+			{ 96:} -1, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,  // _abcdefghijklmno
+			{113:} 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, -1, -1, -1, -1, -1); // pqrstuvwxyz_____
+
 
 type
 	PLongWordArray = ^TLongWordArray_Unsafe;
@@ -323,13 +409,207 @@ type
 { TScrypt }
 
 class function TScrypt.GetBytes(const Passphrase, Salt: UnicodeString; nDesiredBytes: Integer): TBytes;
+var
+	scrypt: TScrypt;
+	saltUtf8: TBytes;
+	costFactor, blockSizeFactor, parallelizationFactor: Cardinal;
+begin
+	scrypt := TScrypt.Create;
+	try
+		saltUtf8 := scrypt.StringToBytes(Salt);
+		scrypt.GetDefaultParameters(costFactor, blockSizeFactor, parallelizationFactor);
+
+		Result := scrypt.DeriveBytes(Passphrase, saltUtf8, costFactor, blockSizeFactor, parallelizationFactor, nDesiredBytes);
+   finally
+		scrypt.Free;
+   end;
+end;
+
+procedure TScrypt.GetDefaultParameters(out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal);
 const
-	N_interactive = 14; //2^14
-//	N_sensitive = 20; //2^20
+	N_interactive = 14; //2^14 = 16,384
+//	N_sensitive = 20; //2^20 = 1,048,576
 	r = 8;
 	p = 1;
 begin
-	Result := TScrypt.GetBytes(Passphrase, Salt, N_interactive, r, p, nDesiredBytes);
+	{
+		The target for a normal user is 250-500 ms
+
+		|  N |  r |  Time (ms) | Memory  |
+		|----|----|------------|---------|
+		| 14 |  8 |   196.2 ms |   16 MB | <-- "normal"
+		| 14 |  9 |   258.5 ms |   18 MB |
+		| 14 | 10 |   265.8 ms |   20 MB |
+		| 14 | 11 |   309.2 ms |   22 MB |
+		| 14 | 12 |   320.2 ms |   24 MB |
+		| 14 | 13 |   326.4 ms |   26 MB |
+		| 14 | 14 |   346.1 ms |   28 MB |
+		| 14 | 15 |   381.4 ms |   30 MB |
+		| 14 | 16 |   418.9 ms |   32 MB |
+
+		| 15 |  5 |   290.0 ms |   20 MB |
+		| 15 |  6 |   331.6 ms |   24 MB |
+		| 15 |  7 |   388.5 ms |   28 MB |
+		| 15 |  8 |   427.6 ms |   32 MB |
+		| 15 |  9 |   475.1 ms |   36 MB |
+
+		| 16 |  2 |   236.3 ms |   16 MB |
+		| 16 |  3 |   337.3 ms |   24 MB |
+		| 16 |  4 |   436.7 ms |   32 MB |
+
+		| 17 |  2 |   492.6 ms |   32 MB |
+
+		| 18 |  2 |   982.1 ms |   64 MB |
+		| 19 |  2 |  1977.1 ms |  128 MB |
+		| 20 |  2 |  3972.0 ms |  256 MB |
+
+		| 20 |  8 | 12838.9 ms | 1024 MB |
+	}
+
+	BlockSizefactor := 8; //will operate on 8*128 = 1,024 byte blocks
+	CostFactor := 14; //i.e. 2^14 = 16,384 iterations, and randomly access 2^14*8*128 = 16 MB of RAM during the calculation
+	ParallelizationFactor := 1;
+
+	//TODO: Benchmark the current computer, and see if it could be faster than 250ms to compute a hash
+end;
+
+class function TScrypt.Base64Decode(const s: string): TBytes;
+
+	function Char64(character: Char): Integer;
+	begin
+		if (Ord(character) > Length(Base64DecodeTable)) then
+		begin
+			Result := -1;
+			Exit;
+		end;
+
+		Result := Base64DecodeTable[character];
+	end;
+
+	procedure Append(value: Byte);
+	var
+		i: Integer;
+	begin
+		i := Length(Result);
+		SetLength(Result, i+1);
+		Result[i] := value;
+	end;
+
+var
+	i: Integer;
+	len: Integer;
+	c1, c2, c3, c4: Integer;
+begin
+	SetLength(Result, 0);
+
+	len := Length(s);
+	i := 1;
+	while i <= len do
+	begin
+		// We'll need to have at least 2 character to form one byte.
+		// Anything less is invalid
+		if (i+1) > len then
+			raise EScryptException.Create('Invalid base64 hash string');
+
+		c1 := Char64(s[i]);
+		Inc(i);
+		c2 := Char64(s[i]);
+		Inc(i);
+
+		if (c1 = -1) or (c2 = -1) then
+			raise EScryptException.Create('Invalid base64 hash string');
+
+		//Now we have at least one byte in c1|c2
+		// c1 = ..111111
+		// c2 = ..112222
+		Append( ((c1 and $3f) shl 2) or (c2 shr 4) );
+
+		//If there's a 3rd character, then we can use c2|c3 to form the second byte
+		if (i > len) then
+			Break;
+		c3 := Char64(s[i]);
+		Inc(i);
+
+		if (c3 = -1) then
+		begin
+			raise EScryptException.Create('Invalid base64 hash string');
+//			Break;
+		end;
+
+		//Now we have the next byte in c2|c3
+		// c2 = ..112222
+		// c3 = ..222233
+		Append( ((c2 and $0f) shl 4) or (c3 shr 2) );
+
+		//If there's a 4th caracter, then we can use c3|c4 to form the third byte
+		if i > len then
+			Break;
+		c4 := Char64(s[i]);
+		Inc(i);
+
+		if (c4 = -1) then
+		begin
+			raise EScryptException.Create('Invalid base64 hash string');
+//			Break;
+		end;
+
+		//Now we have the next byte in c3|c4
+		// c3 = ..222233
+		// c4 = ..333333
+		Append( ((c3 and $03) shl 6) or c4 );
+	end;
+end;
+
+class function TScrypt.Base64Encode(const data: array of Byte): string;
+
+	function EncodePacket(b1, b2, b3: Byte; Len: Integer): string;
+	begin
+		Result := '';
+
+		Result := Result + Base64EncodeTable[b1 shr 2];
+		Result := Result + Base64EncodeTable[((b1 and $03) shl 4) or (b2 shr 4)];
+		if Len < 2 then Exit;
+
+		Result := Result + Base64EncodeTable[((b2 and $0f) shl 2) or (b3 shr 6)];
+		if Len < 3 then Exit;
+
+		Result := Result + Base64EncodeTable[b3 and $3f];
+	end;
+
+var
+	i: Integer;
+	len: Integer;
+	b1, b2: Integer;
+begin
+	Result := '';
+
+	len := Length(data);
+	if len = 0 then
+		Exit;
+
+	//encode whole 3-byte chunks  TV4S 6ytw fsfv kgY8 jIuc Drjc 8deX 1s.
+	i := Low(data);
+	while len >= 3 do
+	begin
+		Result := Result+EncodePacket(data[i], data[i+1], data[i+2], 3);
+		Inc(i, 3);
+		Dec(len, 3);
+	end;
+
+	if len = 0 then
+		Exit;
+
+	//encode partial final chunk
+	Assert(len < 3);
+	if len >= 1 then
+		b1 := data[i]
+	else
+		b1 := 0;
+	if len >= 2 then
+		b2 := data[i+1]
+	else
+		b2 := 0;
+	Result := Result+EncodePacket(b1, b2, 0, len);
 end;
 
 function TScrypt.BlockMix(const B: array of Byte): TBytes;
@@ -411,16 +691,191 @@ begin
    end;
 end;
 
-class function TScrypt.CheckPassword(const Passphrase: UnicodeString; ExpectedPassword: UnicodeString): Boolean;
+class function TScrypt.BsdBase64Decode(const s: string): TBytes;
+
+	function Char64(character: Char): Integer;
+	begin
+		if (Ord(character) > Length(BsdBase64DecodeTable)) then
+		begin
+			Result := -1;
+			Exit;
+		end;
+
+		Result := BsdBase64DecodeTable[character];
+	end;
+
+	procedure Append(value: Byte);
+	var
+		i: Integer;
+	begin
+		i := Length(Result);
+		SetLength(Result, i+1);
+		Result[i] := value;
+	end;
+
+var
+	i: Integer;
+	len: Integer;
+	c1, c2, c3, c4: Integer;
 begin
-	raise Exception.Create('Not implemented');
-	Result := False;
+	SetLength(Result, 0);
+
+	len := Length(s);
+	i := 1;
+	while i <= len do
+	begin
+		// We'll need to have at least 2 character to form one byte.
+		// Anything less is invalid
+		if (i+1) > len then
+			raise EScryptException.Create('Invalid base64 hash string');
+
+		c1 := Char64(s[i]);
+		Inc(i);
+		c2 := Char64(s[i]);
+		Inc(i);
+
+		if (c1 = -1) or (c2 = -1) then
+			raise EScryptException.Create('Invalid base64 hash string');
+
+		//Now we have at least one byte in c1|c2
+		// c1 = ..111111
+		// c2 = ..112222
+		Append( ((c1 and $3f) shl 2) or (c2 shr 4) );
+
+		//If there's a 3rd character, then we can use c2|c3 to form the second byte
+		if (i > len) then
+			Break;
+		c3 := Char64(s[i]);
+		Inc(i);
+
+		if (c3 = -1) then
+		begin
+			raise EScryptException.Create('Invalid base64 hash string');
+//			Break;
+		end;
+
+		//Now we have the next byte in c2|c3
+		// c2 = ..112222
+		// c3 = ..222233
+		Append( ((c2 and $0f) shl 4) or (c3 shr 2) );
+
+		//If there's a 4th caracter, then we can use c3|c4 to form the third byte
+		if i > len then
+			Break;
+		c4 := Char64(s[i]);
+		Inc(i);
+
+		if (c4 = -1) then
+		begin
+			raise EScryptException.Create('Invalid base64 hash string');
+//			Break;
+		end;
+
+		//Now we have the next byte in c3|c4
+		// c3 = ..222233
+		// c4 = ..333333
+		Append( ((c3 and $03) shl 6) or c4 );
+	end;
 end;
 
-function TScrypt.Core(const Passphrase, Salt: UnicodeString;
-		const CostFactor, BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
+class function TScrypt.BsdBase64Encode(const data: array of Byte): string;
+
+	function EncodePacket(b1, b2, b3: Byte; Len: Integer): string;
+	begin
+		Result := '';
+
+		Result := Result + BsdBase64EncodeTable[b1 shr 2];
+		Result := Result + BsdBase64EncodeTable[((b1 and $03) shl 4) or (b2 shr 4)];
+		if Len < 2 then Exit;
+
+		Result := Result + BsdBase64EncodeTable[((b2 and $0f) shl 2) or (b3 shr 6)];
+		if Len < 3 then Exit;
+
+		Result := Result + BsdBase64EncodeTable[b3 and $3f];
+	end;
+
 var
-	saltUtf8: TBytes;
+	i: Integer;
+	len: Integer;
+	b1, b2: Integer;
+begin
+	Result := '';
+
+	len := Length(data);
+	if len = 0 then
+		Exit;
+
+	//encode whole 3-byte chunks  TV4S 6ytw fsfv kgY8 jIuc Drjc 8deX 1s.
+	i := Low(data);
+	while len >= 3 do
+	begin
+		Result := Result+EncodePacket(data[i], data[i+1], data[i+2], 3);
+		Inc(i, 3);
+		Dec(len, 3);
+	end;
+
+	if len = 0 then
+		Exit;
+
+	//encode partial final chunk
+	Assert(len < 3);
+	if len >= 1 then
+		b1 := data[i]
+	else
+		b1 := 0;
+	if len >= 2 then
+		b2 := data[i+1]
+	else
+		b2 := 0;
+	Result := Result+EncodePacket(b1, b2, 0, len);
+end;
+
+procedure TScrypt.BurnBytes(var data: TBytes);
+begin
+	if Length(data) <= 0 then
+		Exit;
+
+	FillChar(data[Low(data)], Length(data), 0);
+	SetLength(data, 0);
+end;
+
+class function TScrypt.CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: UnicodeString): Boolean;
+var
+	scrypt: TScrypt;
+	costFactor, blockSizeFactor, parallelizationFactor: Cardinal;
+	salt, expected, actual: TBytes;
+const
+	SCouldNotParsePassword = 'asdfasdf';
+begin
+	{
+		Validate the supplied password against the saved hash.
+
+		Returns
+			True: If the password is valid
+			False: If the password is invalid
+	}
+	Result := False;
+
+	scrypt := TScrypt.Create;
+	try
+		if not scrypt.TryParseHashString(ExpectedHashString, {out}costFactor, blockSizeFactor, parallelizationFactor, salt, expected) then
+			raise EScryptException.Create(SCouldNotParsePassword);
+
+		actual := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, ParallelizationFactor, Length(expected));
+
+		if Length(actual) = Length(expected) then
+			Result := CompareMem(@expected[0], @actual[0], Length(expected));
+
+   	scrypt.BurnBytes(actual);
+		scrypt.BurnBytes(expected);
+   finally
+		scrypt.Free;
+   end;
+end;
+
+function TScrypt.DeriveBytes(const Passphrase: UnicodeString; const Salt: array of Byte; const CostFactor,
+  BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
+var
 	B: TBytes;
 	i: UInt64;
 	blockSize: Integer;
@@ -429,10 +884,8 @@ var
 begin
 	blockSize := 128*BlockSizeFactor;
 
-	saltUtf8 := TEncoding.UTF8.GetBytes(Salt);
-
 	//Step 1. Use PBKDF2 to generate the initial blocks
-	B := Self.PBKDF2(FHash, Passphrase, saltUtf8[0], Length(saltUtf8), 1, ParallelizationFactor*blockSize);
+	B := Self.PBKDF2(FHash, Passphrase, salt[0], Length(salt), 1, ParallelizationFactor*blockSize);
 
 	//Step 2. Run RoMix on each block
 	{
@@ -440,12 +893,11 @@ begin
 		But the downside is that each ROMix itself will consume blockSize*Cost memory.
 
 		LiteCoin uses
+			Cost: 1,024 (costFactor=10 ==> 2^10 = 1024)
 			blockSize: 128 bytes (r=1)
 			parallelizationFactor: 1 (p=1)
-			Cost: 1,024 (costFactor=10 ==> 2^10 = 1024)
 
 			B: [128]
-
 	}
 	i := 0;
 	while i < ParallelizationFactor do
@@ -461,6 +913,49 @@ begin
 	Result := Self.PBKDF2(FHash, Passphrase, B[0], ParallelizationFactor*blockSize, 1, DesiredBytes);
 end;
 
+function TScrypt.FormatPasswordHash(const costFactor, blockSizeFactor, parallelizationFactor: Integer; const Salt,
+  DerivedBytes: array of Byte): string;
+const
+	SCRYPT_MCF_ID = '$s1';
+var
+	parameters: Cardinal;
+begin
+	{
+		We will use libscrypt's format
+
+		Modular Crypt Format support for scrypt
+		https://github.com/jvarho/pylibscrypt/blob/master/pylibscrypt/mcf.py
+
+		Compatible with libscrypt scrypt_mcf_check also supports the $7$ format.
+
+		libscrypt format:
+
+	      $s1$NNrrpp$salt$hash
+			   NN   - hex encoded N log2 (two hex digits)
+			   rr   - hex encoded r in 1-255
+			   pp   - hex encoded p in 1-255
+			   salt - base64 encoded salt 1-16 bytes decoded
+			   hash - base64 encoded 64-byte scrypt hash
+	}
+	if (CostFactor < 1) or (CostFactor > 255) then
+		raise EScryptException.CreateFmt('Invalid CostFactor %d', [CostFactor]);
+	if (BlockSizeFactor < 1) or (BlockSizeFactor > 255) then
+		raise EScryptException.CreateFmt('Invalid BlockSizeFactor %d', [BlockSizeFactor]);
+	if (ParallelizationFactor < 1) or (ParallelizationFactor > 255) then
+		raise EScryptException.CreateFmt('Invalid ParallelizationFactor %d', [ParallelizationFactor]);
+
+	parameters := (CostFactor shl 16)
+			or (BlockSizeFactor shl 8)
+			or (ParallelizationFactor);
+
+	//$s1$0e0801$TWlzcyB5b3UgS2lyc3Rlbg==$SXQncyBkb2Vzbid0IHdvcmsgb3V0IGZvciBldmVyeW9uZS5Ob3QgZXZlcnlvbmUgZ2V0cyB0byBiZSBsb3ZlZA==
+
+	Result := SCRYPT_MCF_ID+
+			'$'+IntToHex(parameters, 6)+
+			'$'+Self.BsdBase64Encode(Salt)+
+			'$'+Self.BsdBase64Encode(DerivedBytes);
+end;
+
 constructor TScrypt.Create;
 begin
 	inherited Create;
@@ -472,13 +967,35 @@ begin
 {$ENDIF}
 end;
 
+function TScrypt.GenerateSalt: TBytes;
+var
+	type4Uuid: TGUID;
+	salt: TBytes;
+const
+	SCRYPT_SALT_LEN = 16; //This is just a recommended size
+begin
+	//Salt is a 128-bit (16 byte) random value
+	SetLength(salt, SCRYPT_SALT_LEN);
+
+	//Type 4 UUID (RFC 4122) is a handy source of (almost) 128-bits of random data (actually 120 bits)
+	//But the security doesn't come from the salt being secret, it comes from the salt being different each time
+	OleCheck(CoCreateGUID(type4Uuid));
+
+	Move(type4Uuid.D1, salt[0], SCRYPT_SALT_LEN); //i.e. move 16 bytes
+
+	Result := salt;
+end;
+
 class function TScrypt.GetBytes(const Passphrase, Salt: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; DesiredBytes: Integer): TBytes;
 var
+	saltUtf8: TBytes;
 	scrypt: TScrypt;
 begin
 	scrypt := TScrypt.Create;
 	try
-		Result := scrypt.Core(Passphrase, Salt, CostFactor, BlockSizeFactor, ParallelizationFactor, DesiredBytes);
+		saltUtf8 := scrypt.StringToBytes(Salt);
+
+		Result := scrypt.DeriveBytes(Passphrase, saltUtf8, CostFactor, BlockSizeFactor, ParallelizationFactor, DesiredBytes);
    finally
 		scrypt.Free;
    end;
@@ -517,110 +1034,49 @@ end;
 class function TScrypt.HashPassword(const Passphrase: UnicodeString): string;
 var
 	costFactor: Cardinal;
-	blockSize: Cardinal;
+	blockSizeFactor: Cardinal;
 	parallelizationFactor: Cardinal;
+	scrypt: TScrypt;
+	salt, derivedBytes: TBytes;
 begin
-	costFactor := 14; //i.e. 2^14 = 16,384 iterations
-	blockSize := 8; //will operate on 8*128 = 1,024 byte blocks
-	parallelizationFactor := 1;
+	{
+   	Generate a password hash, setting TScrypt decide the best parameters
+	}
+	scrypt := TScrypt.Create;
+	try
+		salt := scrypt.GenerateSalt;
+		scrypt.GetDefaultParameters({out}costFactor, blockSizeFactor, parallelizationFactor);
 
-	Result := TScrypt.HashPassword(Passphrase, costFactor, blockSize, parallelizationFactor);
+		derivedBytes := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, parallelizationFactor, SCRYPT_HASH_LEN);
+
+		Result := scrypt.FormatPasswordHash(costFactor, blockSizeFactor, parallelizationFactor, salt, derivedBytes);
+   finally
+		scrypt.Free;
+   end;
 end;
 
-class function TScrypt.HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, Parallelization: Cardinal): string;
+class function TScrypt.HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string;
+var
+	scrypt: TScrypt;
+	salt, derivedBytes: TBytes;
 begin
-{
-	Someone already decided on a standard string way to represent scrypt passwords.
-		https://github.com/wg/scrypt
+	{
+		Hash the password, using the supplied parameters.
 
-	We'll gravitate to any existing standard we can find
+			CostFactor:            log2(N), N = 2^costFactor
+			BlockSizeFactor:       r
+			ParallelizationFactor: p
+	}
+	scrypt := TScrypt.Create;
+	try
+		scrypt.GenerateSalt;
 
-	$s0$params$salt$key
+		derivedBytes := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, ParallelizationFactor, SCRYPT_HASH_LEN);
 
-	  s0     - version 0 of the format with 128-bit salt and 256-bit derived key
-	  params - 32-bit hex integer containing log2(N) (16 bits), r (8 bits), and p (8 bits)
-	  salt   - base64-encoded salt
-	  key    - base64-encoded derived key
-
-  Example:
-
-    $s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=
-
-    passwd = "secret"
-         N = 16384
-         r = 8
-			p = 1
-}
-
-
-{
-	There is another standard out there, published by the guy who authored the rfc.
-
-
-	Unix crypt using scrypt
-	https://gitorious.org/scrypt/ietf-scrypt/raw/7c4a7c47d32a5dbfd43b1223e4b9ac38bfe6f8a0:unix-scrypt.txt
-      -----------------------
-
-      This document specify a new Unix crypt method based on the scrypt
-      password-based key derivation function.  It uses the
-
-         $<ID>$<SALT>$<PWD>
-
-      convention introduced with the old MD5-based solution and also used by
-      the more recent SHA-256/SHA-512 mechanism specified here:
-
-        http://www.akkadia.org/drepper/sha-crypt.html
-
-      The scrypt method uses the following value:
-
-
-           ID       |    Method
-        -------------------------------
-           7        |    scrypt
-
-      The scrypt method requires three parameters in the SALT value: N, r
-      and p which are expressed like this:
-
-        N=<N>,r=<r>,p=<p>$
-
-      where N, r and p are unsigned decimal numbers that are used as the
-      scrypt parameters.
-
-      The PWD part is the password string, and the size is fixed to 86
-      characters which corresponds to 64 bytes base64 encoded.
-
-      To compute the PWD part, run the scrypt algorithm with the password,
-      salt, parameters to generate 64 bytes and base64 encode it.
-}
-
-{
-	And then theres:
-
-	https://github.com/jvarho/pylibscrypt/blob/master/pylibscrypt/mcf.py
-
-   Modular Crypt Format support for scrypt
-
-   Compatible with libscrypt scrypt_mcf_check also supports the $7$ format.
-
-   libscrypt format:
-
-	   $s1$NNrrpp$salt$hash
-	   NN   - hex encoded N log2 (two hex digits)
-	   rr   - hex encoded r in 1-255
-	   pp   - hex encoded p in 1-255
-	   salt - base64 encoded salt 1-16 bytes decoded
-	   hash - base64 encoded 64-byte scrypt hash
-
-   $7$ format:
-	   $7$Nrrrrrpppppsalt$hash
-	   N     - crypt base64 N log2
-	   rrrrr - crypt base64 r (little-endian 30 bits)
-	   ppppp - crypt base64 p (little-endian 30 bits)
-	   salt  - raw salt (0-43 bytes that should be limited to crypt base64)
-	   hash  - crypt base64 encoded 32-byte scrypt hash (43 bytes)
-}
-
-
+		Result := scrypt.FormatPasswordHash(costFactor, blockSizeFactor, ParallelizationFactor, salt, derivedBytes);
+   finally
+		scrypt.Free;
+   end;
 end;
 
 function TScrypt.HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
@@ -685,16 +1141,6 @@ begin
 	Move(digest[0], oKeyPad[blockSize], Length(digest));
 	Hash.HashData(oKeyPad[0], Length(oKeyPad));
 	Result := Hash.Finalize;
-end;
-
-function TScrypt.Integerify(const B: array of Byte; const N: Integer): Integer;
-begin
-{
-		Integerify (B[0] ... B[2 * r - 1]) is defined
-		as the result of interpreting B[2 * r - 1] as a
-		little-endian integer.
-}
-
 end;
 
 function TScrypt.PBKDF2(const Hash: IHashAlgorithm; const Password: UnicodeString; const Salt; const SaltLength: Integer;
@@ -851,6 +1297,12 @@ begin
 
 	//Step 2 - Create N copies of B
 	//V ← N copies of B
+
+	//Delphi's GetMem and SetLength are limited to signed 32-bits (<21474836468)
+	//That means that N*r*128 < 21474836468
+	if Int64(N*r*128) >= $7FFFFFFF then
+		raise EScryptException.CreateFmt('Parameters N (%d) and r (%d) use exceed available memory usage (%d bytes)', [N, r, Int64(N)*r*128]);
+
 	SetLength(V, BlockSize*N);
 	for i := 0 to N-1 do
 	begin
@@ -983,12 +1435,170 @@ begin
    end;
 end;
 
-function TScrypt.StringToBytes(const s: string): TBytes;
+class function TScrypt.StringToBytes(const s: string): TBytes;
 begin
 {
 	For scrypt passwords we will use UTF-8 encoding.
 }
 	Result := TEncoding.UTF8.GetBytes(s);
+end;
+
+class function TScrypt.Tokenize(const s: string; Delimiter: Char): TArray<string>;
+begin
+	//In case .Split isn't available, someone can define another implementation
+	Result := s.Split([Delimiter]);
+end;
+
+function TScrypt.TryParseHashString(HashString: string; out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal;
+		out Salt: TBytes; out Data: TBytes): Boolean;
+var
+	tokens: TArray<string>;
+	parameters: Cardinal;
+begin
+	Result := False;
+
+	if HashString = '' then
+		Exit; //raise EScryptException.Create('HashString cannot be empty');
+
+{
+	There are a number of different standards out there.
+}
+	//All versions start with a "$"
+	if HashString[1] <> '$' then
+		Exit; //raise EScryptException.Create('HashString must start with ''$''');
+
+	//All versions will have five tokens
+	tokens := Self.Tokenize(HashString, '$');
+		//tokens[0] ==> "" (the space before the first $)
+		//tokens[1] ==> "s01"
+		//tokens[2] ==> parameters
+		//tokens[3] ==> salt
+		//tokens[4] ==> derived bytes
+	if Length(tokens) < 5 then
+		Exit; //raise EScryptException.CreateFmt('HashString string did not contain five tokens (%d)', [Length(tokens)]);
+
+	if AnsiSameText(tokens[1], 's1') then
+	begin
+      {
+         Modular Crypt Format support for scrypt
+         https://github.com/jvarho/pylibscrypt/blob/master/pylibscrypt/mcf.py
+
+         Compatible with libscrypt scrypt_mcf_check also supports the $7$ format.
+
+         libscrypt format:
+
+            $s1$NNrrpp$salt$hash
+               NN   - hex encoded N log2 (two hex digits)
+               rr   - hex encoded r in 1-255
+               pp   - hex encoded p in 1-255
+               salt - base64 encoded salt 1-16 bytes decoded
+               hash - base64 encoded 64-byte scrypt hash
+		}
+		parameters := Cardinal(StrToInt('0x'+tokens[2]));
+		CostFactor := (parameters and $FFFF0000) shr 16;
+		BlockSizeFactor := (parameters and $0000FF00) shr 8;
+		ParallelizationFactor := (parameters and $000000FF);
+
+      Salt := TScrypt.BsdBase64Decode(tokens[3]);
+		Data := TScrypt.BsdBase64Decode(tokens[4]);
+
+		Result := True;
+   end
+	else if AnsiSameText(tokens[1], 's0') then
+	begin
+      {
+         Java implementation of scrypt (Lambdaworks OSS)
+         https://github.com/wg/scrypt
+
+         $s0$params$salt$key
+
+              s0     - version 0 of the format with 128-bit salt and 256-bit derived key
+              params - 32-bit hex integer containing log2(N) (16 bits), r (8 bits), and p (8 bits)
+              salt   - base64-encoded salt
+              key    - base64-encoded derived key
+
+        Example:
+
+             $s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=
+
+          passwd = "secret"
+               N = 16384
+               r = 8
+               p = 1
+      }
+		parameters := Cardinal(StrToInt('0x'+tokens[2]));
+		CostFactor := (parameters and $FFFF0000) shr 16;
+		BlockSizeFactor := (parameters and $0000FF00) shr 8;
+		ParallelizationFactor := (parameters and $000000FF);
+
+      Salt := TScrypt.BsdBase64Decode(tokens[3]);
+		Data := TScrypt.BsdBase64Decode(tokens[4]);
+
+		Result := True;
+   end
+	else if AnsiSameText(tokens[1], '7') then
+	begin
+      {
+         Unix crypt using scrypt
+         https://gitorious.org/scrypt/ietf-scrypt/raw/7c4a7c47d32a5dbfd43b1223e4b9ac38bfe6f8a0:unix-scrypt.txt
+         -----------------------
+
+			$7$N=14,r=4,p=1$epIxT/h6HbbwHaehFnh/bw==$MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNA==
+
+         This document specify a new Unix crypt method based on the scrypt
+         password-based key derivation function.  It uses the
+
+            $<ID>$<SALT>$<PWD>
+
+         convention introduced with the old MD5-based solution and also used by
+         the more recent SHA-256/SHA-512 mechanism specified here:
+
+           http://www.akkadia.org/drepper/sha-crypt.html
+
+         The scrypt method uses the following value:
+
+                 ID       |    Method
+              -------------------------------
+                 7        |    scrypt
+
+         The scrypt method requires three parameters in the SALT value: N, r
+         and p which are expressed like this:
+
+           N=<N>,r=<r>,p=<p>$
+
+         where N, r and p are unsigned decimal numbers that are used as the
+         scrypt parameters.
+
+         The PWD part is the password string, and the size is fixed to 86
+         characters which corresponds to 64 bytes base64 encoded.
+
+         To compute the PWD part, run the scrypt algorithm with the password,
+         salt, parameters to generate 64 bytes and base64 encode it.
+      }
+   end
+	else if AnsiSameText(tokens[1], '7') then
+	begin
+		{
+		   $7$ format
+			https://github.com/jvarho/pylibscrypt/blob/master/pylibscrypt/mcf.py
+
+			   $7$Nrrrrrpppppsalt$hash
+			   N     - crypt base64 N log2
+			   rrrrr - crypt base64 r (little-endian 30 bits)
+			   ppppp - crypt base64 p (little-endian 30 bits)
+			   salt  - raw salt (0-43 bytes that should be limited to crypt base64)
+			   hash  - crypt base64 encoded 32-byte scrypt hash (43 bytes)
+
+				(crypt base64 is base64 with the alphabet: ./0-9A-Za-z)
+
+			This is a brain-dead format that needs to be uninvented.
+		}
+	end
+	else
+   begin
+		//We don't know what it is. Tell the caller about it
+		//raise EScryptException.CreateFmt('Unknown scrypt hash format "%s"', [tokens[1]]);
+   end;
 end;
 
 procedure TScrypt.XorBlockInPlace(var A; const B; Length: Integer);

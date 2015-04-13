@@ -11,6 +11,9 @@ type
 		FScrypt: TScrypt;
 		procedure SetUp; override;
 		procedure TearDown; override;
+
+	public
+		procedure Benchmarks;
 	published
 		//Even though we don't use SHA-1, we implemented it because PBKDF2_SHA1 is the only one with published test vectors
 		procedure SelfTest_SHA1;
@@ -28,6 +31,9 @@ type
 		procedure Test_BlockMix;
 		procedure Test_ROMix;
 		procedure SelfTest_Scrypt;
+
+		procedure Test_PasswordHash;
+
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -488,6 +494,101 @@ begin
 	t('The quick brown fox jumps over the lazy dog', 'd7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592');
 end;
 
+procedure TScryptTests.Benchmarks;
+var
+	freq, t1, t2: Int64;
+	N, r: Integer;
+	s: string;
+
+	RowLeader, ColumnSeparator, RowTrailer: string;
+
+	function ElapsedTicks(StartTicks: Int64): Int64;
+	var
+		endTicks: Int64;
+	begin
+		if not QueryPerformanceCounter(endTicks) then endTicks := 0;
+		Result := (endTicks - StartTicks);
+	end;
+
+const
+	UseTsv: Boolean = True;
+	N_max = 20; //20 trips up on VM and address space limits
+	r_max = 16; //8 ==> 1 KB block. 16 ==> 2 KB block
+
+	//Tab separated values (copy-paste to Excel)
+	TsvRowLeader = ''; //'|';
+	TsvColumnSeparator = '	'; //'|';
+	TsvRowTrailer = ''; //'|';
+
+	//Markdown
+	MRowLeader = '| ';
+	MColumnSeparator = ' | ';
+	MRowTrailer = ' |';
+const
+	STestPassword = 'correct horse battery staple';
+begin
+	QueryPerformanceFrequency(freq);
+
+	if UseTsv then
+	begin
+		RowLeader := TsvRowLeader;
+		ColumnSeparator := TsvColumnSeparator;
+		RowTrailer := TsvRowTrailer;
+	end
+	else
+	begin
+		RowLeader := MRowLeader;
+		ColumnSeparator := MColumnSeparator;
+		RowTrailer := MRowTrailer;
+	end;
+
+
+	s := RowLeader+'N';
+	for r := 1 to r_max do
+		s := s+ColumnSeparator+'r='+IntToStr(r);
+	s := s+RowTrailer;
+	Status(s);
+
+	if not UseTsv then
+	begin
+		s := '|---';
+		for r := 1 to r_max do
+			s := s+'|----';
+		s := s+'|';
+		Status(s);
+	end;
+
+	for N := 1 to N_max do
+	begin
+		s := RowLeader+IntToStr(N);
+		for r := 1 to r_max do
+		begin
+			if (N < 16*r) and ((1 shl N)*r*Int(128) < $7FFFFFFF) then
+			begin
+				try
+					QueryPerformanceCounter(t1);
+					TScrypt.HashPassword(STestPassword, N, r, 1);
+					t2 := ElapsedTicks(t1);
+					s := s+Format(ColumnSeparator+'%.1f', [t2/freq*1000]);
+				except
+					on E:EOutOfMemory do
+						begin
+							s := s+Format(ColumnSeparator+'%s', ['#mem']);
+					end;
+				end;
+
+			end
+			else
+			begin
+				//invalid cost
+				s := s+ColumnSeparator+'#N/A';
+			end;
+		end;
+		s := s+RowTrailer;
+		Status(s);
+	end;
+end;
+
 procedure TScryptTests.SelfTest_HMAC_SHA1;
 
 	procedure t(const Key: AnsiString; const Data: AnsiString; const ExpectedDigest: array of Byte);
@@ -705,6 +806,26 @@ begin
 								'647320746f20626520686173686564206265666f7265206265696e6720757365'+
 								'642062792074686520484d414320616c676f726974686d2e', //"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm."
 			{HMAC-SHA-256}	'9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2');
+end;
+
+procedure TScryptTests.Test_PasswordHash;
+var
+	s: string;
+	freq, t1, t2: Int64;
+begin
+	if not QueryPerformanceFrequency(freq) then freq := -1;
+	if not QueryPerformanceCounter(t1) then t1 := 0;
+	s := TScrypt.HashPassword('correct horse battery staple');
+	if not QueryPerformanceCounter(t2) then t2 := 0;
+
+	Status(Format('Time to hash password: %.3f ms', [(t2-t1)/freq*1000]));
+
+	Self.CheckFalse(s='');
+
+	if not QueryPerformanceCounter(t1) then t1 := 0;
+	Self.CheckTrue(TScrypt.CheckPassword('correct horse battery staple', s));
+	if not QueryPerformanceCounter(t2) then t2 := 0;
+	Status(Format('Time to verify password: %.3f ms', [(t2-t1)/freq*1000]));
 end;
 
 procedure TScryptTests.Test_PBKDF2_SHA1;
@@ -1149,19 +1270,23 @@ begin
 		the password and salt strings are passed as sequences of ASCII bytes without a
 		terminating NUL
 	}
-	test('', '', {N=16}4, {r=}1, {p=}1, 64,
+	//uses 512 bytes
+	test('', '', {N=16=2^}4, {r=}1, {p=}1, 64,
 			'77 d6 57 62 38 65 7b 20 3b 19 ca 42 c1 8a 04 97 f1 6b 48 44 e3 07 4a e8 df df fa 3f ed e2 14 42'+
 			'fc d0 06 9d ed 09 48 f8 32 6a 75 3a 0f c8 1f 17 e8 d3 e0 fb 2e 0d 36 28 cf 35 e2 0c 38 d1 89 06');
 
-	test('password', 'NaCl', {N=1024}10, {r=}8, {p=}16, 64,
+	//uses 1 MB
+	test('password', 'NaCl', {N=1024=2^}10, {r=}8, {p=}16, 64,
 			'fd ba be 1c 9d 34 72 00 78 56 e7 19 0d 01 e9 fe 7c 6a d7 cb c8 23 78 30 e7 73 76 63 4b 37 31 62'+
 			'2e af 30 d9 2e 22 a3 88 6f f1 09 27 9d 98 30 da c7 27 af b9 4a 83 ee 6d 83 60 cb df a2 cc 06 40');
 
-	test('pleaseletmein', 'SodiumChloride', {N=16384}14, {r=}8, {p=}1, 64,
+	//uses 16 MB
+	test('pleaseletmein', 'SodiumChloride', {N=16384=2^}14, {r=}8, {p=}1, 64,
 			'70 23 bd cb 3a fd 73 48 46 1c 06 cd 81 fd 38 eb fd a8 fb ba 90 4f 8e 3e a9 b5 43 f6 54 5d a1 f2'+
 			'd5 43 29 55 61 3f 0f cf 62 d4 97 05 24 2a 9a f9 e6 1e 85 dc 0d 65 1e 40 df cf 01 7b 45 57 58 87');
 
-	test('pleaseletmein', 'SodiumChloride', {N=1048576}20, {r=}8, {p=}1, 64,
+	//uses 1 GB
+	test('pleaseletmein', 'SodiumChloride', {N=1048576=2^}20, {r=}8, {p=}1, 64,
 			'21 01 cb 9b 6a 51 1a ae ad db be 09 cf 70 f8 81 ec 56 8d 57 4a 2f fd 4d ab e5 ee 98 20 ad aa 47'+
 			'8e 56 fd 8f 4b a5 d0 9f fa 1c 6d 92 7c 40 f4 c3 37 30 40 49 e8 a9 52 fb cb f4 5c 6f a7 7a 41 a4');
 end;
