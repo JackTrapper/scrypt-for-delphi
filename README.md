@@ -39,18 +39,18 @@ The `TScrypt` class also supports being used for password hashing (i.e. storage 
 
 By convention TScrypt outputs a password hash as string in the form:
 
-    $7$Nrrrrrpppppsalt$hash
+    $s1$NNrrpp$salt$hash
 
 The parts of the string are:
 
 | Value | Meaning | Notes |
 |-------|---------|-------|
-| 7 | Hash algorithm | "7" = current version of Scrypt |
-| N | crypt base64 N log2 | Default is 14 (i.e. 2^14) iterations |
-| rrrrr | crypt base64 r (little-endian 30 bits) |  |
-| ppppp | crypt base64 p (little-endian 30 bits) |  |
-| salt | raw salt | 0-43 bytes that should be limited to crypt base64 |
-| hash | hash | crypt base64 encoded 32-byte scrypt hash (43 bytes) |
+| s1 | Hash algorithm | "s1" = current version of Scrypt |
+| N | Hex encoded log2(N) | Default is 14 (i.e. 2^14) iterations |
+| rr | Hex encoded Block Size | 1-255  |
+| pp | Hex encoded Parallelization Factor | 1-255  |
+| salt | base64 encoded salt | 0-16 bytes decoded |
+| hash | base64 encoded hash | 64-bytes |
 
 Because the three scrypt parameters are stored in the returned string, scrypt password hashes are backwards and forwards compatible with changing the factors. It also makes Scrypt extraordinarily convenient, in that a random salt is automatically generated and stored for you (you don't have to worry about storing it in a database or retrieving it).
 
