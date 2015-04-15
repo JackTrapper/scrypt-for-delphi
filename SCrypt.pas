@@ -61,10 +61,10 @@
 	Version History
 	===============
 
-	Version 1.1   20150410
+	Version 1.1   20150415
 			- Support for actually verifying a password hash
+			- 43% faster due to optimizations in XorBlock and Salsa20
 			- TODO: Do the same thing canonical scrypt.c does, and do a benchmark before generation to determine parameters.
-
 
 	Version 1.0   20150408
 			- Inital release. Public domain.  Ian Boyd.
@@ -158,7 +158,7 @@ type
 		class function Tokenize(const s: string; Delimiter: Char): TArray<string>;
 		function GenerateSalt: TBytes;
 
-		procedure XorBlockInPlace(var A; const B; Length: Integer); inline;
+		procedure XorBlockInPlace(var A; const B; Length: Integer);
 
 		function HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
 		function PBKDF2(const Hash: IHashAlgorithm; const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
@@ -1393,15 +1393,15 @@ begin
 	The 64-byte input x to Salsa20 is viewed in little-endian form as 16 UInt32's
 }
 	//Copy 64-byte input array into UInt32 array
-	for i := 0 to 15 do
-		X[i] := PLongWordArray(@Input)^[i];
+	Move(Input, X[0], 64); //15.4% speedup in Salsa20 (11.8% speedup overall) by using Move rather than copying 4 bytes at a time
+	{
+		|        |       Salsa20 |       Overall |
+		|--------|---------------|---------------|
+		| 4 byte | 11,604.904 ms | 13,361.453 ms |
+		| Move   |  9,818.610 ms | 11,791.294 ms |
+	}
 
-	//The guy who originally authored Salsa said it is a 10-round algorithm,
-	//but thought it would be hilarious to for i = 1 to 10 stepping by two.
-	//So it's a five round function.
-	//The guy who authored scrypt calls it an 8-round algorithm,
-	//but kept up the joke, and also skipping by two; so it's a four-round algorithm.
-	//The stupidity stops here: it's a four round algorithm: for i = 1 to 4
+	//It's a four round algorithm; when the documentation says it's 8 round.
 	for i := 1 to 4 do
 	begin
 		x[ 4] := x[ 4] xor LRot32(x[ 0]+x[12], 7);  x[ 8] := x[ 8] xor LRot32(x[ 4]+x[ 0], 9);
@@ -1422,7 +1422,7 @@ begin
 		x[14] := x[14] xor LRot32(x[13]+x[12],13);  x[15] := x[15] xor LRot32(x[14]+x[13],18);
    end;
 
-	//Result := Input + X;
+	//Result ← Input + X;
 	Result := PLongWordArray(@Input);
 	i := 0;
 	while (i < 15) do
@@ -1604,12 +1604,39 @@ end;
 procedure TScrypt.XorBlockInPlace(var A; const B; Length: Integer);
 var
 	i: Integer;
+	blocks: Integer;
+	n: Integer;
+type
+	PUInt64Array = ^TUInt64Array_Unsafe;
+	TUInt64Array_Unsafe = array[0..MaxInt div 16] of UInt64;
 begin
-	//TODO: Unroll to 4-byte chunks
-	for i := 0 to Length-1 do
+	//DONE: Unroll to 8-byte chunks
+	//TODO: Detect 128-bit or 256-bit SIMD available, and unroll to XOR 16 or 32 bytes at at time.
+	{
+		Unrolling XOR to operate on 8 bytes at a time, rather than 1 byte at a time,
+		gives a 5.3x speedup in the XORing operation, and a 1.6x speedup (35.7%) overall.
+
+		| SIMD    | Time in XOR  | Overall time  |
+		|---------|--------------|---------------|
+		| 1 byte  | 8,682.402 ms | 17,511.904 ms |
+		| 8 bytes | 1,631.759 ms | 11,253.510 ms |
+
+		Note: Inlining this function has no performance improvement (if anything its 0.0007% slower)
+	}
+//	for i := 0 to Length-1 do
+//		PByteArray(@A)[i] := PByteArray(@A)[i] xor PByteArray(@B)[i];
+
+	blocks := Length div SizeOf(UInt64); //optimizes to "shr 3" anyway
+	for i := 0 to blocks-1 do
+		PUInt64Array(@A)[i] := PUInt64Array(@A)[i] xor PUInt64Array(@B)[i];
+
+	//Finish up any remaining. This will never happen in practice; because 64 bytes is always a multiple of 8 bytes
+	if (Length mod SizeOf(UInt64)) <> 0 then
 	begin
-		PByteArray(@A)[i] := PByteArray(@A)[i] xor PByteArray(@B)[i];
-   end;
+		n := blocks*SizeOf(UInt64);
+		for i := n to Length-1 do
+			PByteArray(@A)[i] := PByteArray(@A)[i] xor PByteArray(@B)[i];
+	end;
 end;
 
 { TSHA1 }
