@@ -1384,21 +1384,40 @@ end;
 
 procedure TScrypt.Salsa20InPlace(var Input);
 var
-	X: array[0..15] of LongWord;
+	X: PLongWordArray;
 	i: Integer;
 	Result: PLongWordArray;
+	x00, x01, x02, x03,
+	x04, x05, x06, x07,
+	x08, x09, x10, x11,
+	x12, x13, x14, x15: LongWord;
 begin
 {
 	The 64-byte input x to Salsa20 is viewed in little-endian form as 16 UInt32's
 }
-	//Copy 64-byte input array into UInt32 array
-	Move(Input, X[0], 64); //15.4% speedup in Salsa20 (11.8% speedup overall) by using Move rather than copying 4 bytes at a time
+	//Storing array values in local variables can avoid array bounds checking every time, giving 4.4% performance boost
 	{
-		|        |       Salsa20 |       Overall |
-		|--------|---------------|---------------|
-		| 4 byte | 11,604.904 ms | 13,361.453 ms |
-		| Move   |  9,818.610 ms | 11,791.294 ms |
+		|       |        Overall |
+		|-------|----------------|
+		| Array |   7,783.063 ms |
+		| Vars  |   7,439.332 ms |
 	}
+	x00 := PLongWordArray(@Input)[0];
+	x01 := PLongWordArray(@Input)[1];
+	x02 := PLongWordArray(@Input)[2];
+	x03 := PLongWordArray(@Input)[3];
+	x04 := PLongWordArray(@Input)[4];
+	x05 := PLongWordArray(@Input)[5];
+	x06 := PLongWordArray(@Input)[6];
+	x07 := PLongWordArray(@Input)[7];
+	x08 := PLongWordArray(@Input)[8];
+	x09 := PLongWordArray(@Input)[9];
+	x10 := PLongWordArray(@Input)[10];
+	x11 := PLongWordArray(@Input)[11];
+	x12 := PLongWordArray(@Input)[12];
+	x13 := PLongWordArray(@Input)[13];
+	x14 := PLongWordArray(@Input)[14];
+	x15 := PLongWordArray(@Input)[15];
 
 	//It's a four round algorithm; when the documentation says it's 8 round.
 	for i := 0 to 3 do
@@ -1406,13 +1425,13 @@ begin
 		{
 			Reordering the assignments from the RFC gives us a free 27.4% speedup.
 			It works because there are operations that can be done that do not (yet) depend on the previous result.
-			So while one execution unit is calculating the sum+LRot and Xor of one tuple,
+			So while one execution unit is calculating the sum+LRot+Xor of one tuple,
 			we can go ahead and start calculating on a different tuple.
 
 			|            |       Overall |
 			|------------|---------------|
 			| Original   | 11,264.682 ms |
-			| Rearranged |  8,178.178 ms |
+			| Rearranged |  7,783.063 ms |
 
 			TODO: Figure out a SIMD way to do these four parallel constructs in parallel.
 		}
@@ -1428,28 +1447,28 @@ begin
 			  A b c       B c d   a    C  d  a   b     D
 		}
 		//First DWORD
-		x[ 4] := x[ 4] xor LRot32(x[ 0]+x[12], 7);
-		x[ 9] := x[ 9] xor LRot32(x[ 5]+x[ 1], 7);
-		x[14] := x[14] xor LRot32(x[10]+x[ 6], 7);
-		x[ 3] := x[ 3] xor LRot32(x[15]+x[11], 7);
+		x04 := x04 xor LRot32(x00+x12, 7);
+		x09 := x09 xor LRot32(x05+x01, 7);
+		x14 := x14 xor LRot32(x10+x06, 7);
+		x03 := x03 xor LRot32(x15+x11, 7);
 
 		//Second DWORD
-		x[ 8] := x[ 8] xor LRot32(x[ 4]+x[ 0], 9);
-		x[13] := x[13] xor LRot32(x[ 9]+x[ 5], 9);
-		x[ 2] := x[ 2] xor LRot32(x[14]+x[10], 9);
-		x[ 7] := x[ 7] xor LRot32(x[ 3]+x[15], 9);
+		x08 := x08 xor LRot32(x04+x00, 9);
+		x13 := x13 xor LRot32(x09+x05, 9);
+		x02 := x02 xor LRot32(x14+x10, 9);
+		x07 := x07 xor LRot32(x03+x15, 9);
 
 		//Third DWORD
-		x[12] := x[12] xor LRot32(x[ 8]+x[ 4],13);
-		x[ 1] := x[ 1] xor LRot32(x[13]+x[ 9],13);
-		x[ 6] := x[ 6] xor LRot32(x[ 2]+x[14],13);
-		x[11] := x[11] xor LRot32(x[ 7]+x[ 3],13);
+		x12 := x12 xor LRot32(x08+x04,13);
+		x01 := x01 xor LRot32(x13+x09,13);
+		x06 := x06 xor LRot32(x02+x14,13);
+		x11 := x11 xor LRot32(x07+x03,13);
 
 		//Fourth DWORD
-		x[ 0] := x[ 0] xor LRot32(x[12]+x[ 8],18);
-		x[ 5] := x[ 5] xor LRot32(x[ 1]+x[13],18);
-		x[10] := x[10] xor LRot32(x[ 6]+x[ 2],18);
-		x[15] := x[15] xor LRot32(x[11]+x[ 7],18);
+		x00 := x00 xor LRot32(x12+x08,18);
+		x05 := x05 xor LRot32(x01+x13,18);
+		x10 := x10 xor LRot32(x06+x02,18);
+		x15 := x15 xor LRot32(x11+x07,18);
 
 		{
 			Mix the DWORDs within each 16 byte set.
@@ -1461,33 +1480,33 @@ begin
 			  A   a a   b B   b   c c  C         d  d  D
 		}
 		//Calculate first DWORD within each chunk
-		x[ 1] := x[ 1] xor LRot32(x[ 0]+x[ 3], 7);
-		x[ 6] := x[ 6] xor LRot32(x[ 5]+x[ 4], 7);
-		x[11] := x[11] xor LRot32(x[10]+x[ 9], 7);
-		x[12] := x[12] xor LRot32(x[15]+x[14], 7);
+		x01 := x01 xor LRot32(x00+x03, 7);
+		x06 := x06 xor LRot32(x05+x04, 7);
+		x11 := x11 xor LRot32(x10+x09, 7);
+		x12 := x12 xor LRot32(x15+x14, 7);
 
 		//Calculate second DWORD within each chunk
-		x[ 2] := x[ 2] xor LRot32(x[ 1]+x[ 0], 9);
-		x[ 7] := x[ 7] xor LRot32(x[ 6]+x[ 5], 9);
-		x[ 8] := x[ 8] xor LRot32(x[11]+x[10], 9);
-		x[13] := x[13] xor LRot32(x[12]+x[15], 9);
+		x02 := x02 xor LRot32(x01+x00, 9);
+		x07 := x07 xor LRot32(x06+x05, 9);
+		x08 := x08 xor LRot32(x11+x10, 9);
+		x13 := x13 xor LRot32(x12+x15, 9);
 
 		//Calculate third DWORD within each chunk
-		x[ 3] := x[ 3] xor LRot32(x[ 2]+x[ 1],13);
-		x[ 4] := x[ 4] xor LRot32(x[ 7]+x[ 6],13);
-		x[ 9] := x[ 9] xor LRot32(x[ 8]+x[11],13);
-		x[14] := x[14] xor LRot32(x[13]+x[12],13);
+		x03 := x03 xor LRot32(x02+x01,13);
+		x04 := x04 xor LRot32(x07+x06,13);
+		x09 := x09 xor LRot32(x08+x11,13);
+		x14 := x14 xor LRot32(x13+x12,13);
 
 		//Calculate fourth DWORD within each chunk
-		x[ 0] := x[ 0] xor LRot32(x[ 3]+x[ 2],18);
-		x[ 5] := x[ 5] xor LRot32(x[ 4]+x[ 7],18);
-		x[10] := x[10] xor LRot32(x[ 9]+x[ 8],18);
-		x[15] := x[15] xor LRot32(x[14]+x[13],18);
+		x00 := x00 xor LRot32(x03+x02,18);
+		x05 := x05 xor LRot32(x04+x07,18);
+		x10 := x10 xor LRot32(x09+x08,18);
+		x15 := x15 xor LRot32(x14+x13,18);
 	end;
 
 	//Result ← Input + X;
 	Result := PLongWordArray(@Input);
-	i := 0;
+{	i := 0;
 	while (i < 15) do
 	begin
 		Result[i  ] := Result[i  ] + X[i  ];
@@ -1495,7 +1514,23 @@ begin
 		Result[i+2] := Result[i+2] + X[i+2];
 		Result[i+3] := Result[i+3] + X[i+3];
 		Inc(i, 4);
-	end;
+	end;}
+	Result[ 0] := Result[ 0] + X00;
+	Result[ 1] := Result[ 1] + X01;
+	Result[ 2] := Result[ 2] + X02;
+	Result[ 3] := Result[ 3] + X03;
+	Result[ 4] := Result[ 4] + X04;
+	Result[ 5] := Result[ 5] + X05;
+	Result[ 6] := Result[ 6] + X06;
+	Result[ 7] := Result[ 7] + X07;
+	Result[ 8] := Result[ 8] + X08;
+	Result[ 9] := Result[ 9] + X09;
+	Result[10] := Result[10] + X10;
+	Result[11] := Result[11] + X11;
+	Result[12] := Result[12] + X12;
+	Result[13] := Result[13] + X13;
+	Result[14] := Result[14] + X14;
+	Result[15] := Result[15] + X15;
 end;
 
 class function TScrypt.StringToBytes(const s: string): TBytes;
