@@ -1291,18 +1291,17 @@ begin
 	//N ← 2^CostFactor
 	N := (1 shl CostFactor);
 
+	//Delphi's GetMem and SetLength are limited to signed 32-bits (<21474836468)
+	//That means that N*r*128 < 21474836468
+	if Int64(N*r*128) >= $7FFFFFFF then
+		raise EScryptException.CreateFmt('Parameters N (%d) and r (%d) use exceed available memory usage (%d bytes)', [N, r, Int64(N)*r*128]);
+
 	//Step 1: X ← B
 	SetLength(X, BlockSize);
 	Move(B, X[0], BlockSize);
 
 	//Step 2 - Create N copies of B
 	//V ← N copies of B
-
-	//Delphi's GetMem and SetLength are limited to signed 32-bits (<21474836468)
-	//That means that N*r*128 < 21474836468
-	if Int64(N*r*128) >= $7FFFFFFF then
-		raise EScryptException.CreateFmt('Parameters N (%d) and r (%d) use exceed available memory usage (%d bytes)', [N, r, Int64(N)*r*128]);
-
 	SetLength(V, BlockSize*N);
 	for i := 0 to N-1 do
 	begin
@@ -1402,25 +1401,89 @@ begin
 	}
 
 	//It's a four round algorithm; when the documentation says it's 8 round.
-	for i := 1 to 4 do
+	for i := 0 to 3 do
 	begin
-		x[ 4] := x[ 4] xor LRot32(x[ 0]+x[12], 7);  x[ 8] := x[ 8] xor LRot32(x[ 4]+x[ 0], 9);
-		x[12] := x[12] xor LRot32(x[ 8]+x[ 4],13);  x[ 0] := x[ 0] xor LRot32(x[12]+x[ 8],18);
-		x[ 9] := x[ 9] xor LRot32(x[ 5]+x[ 1], 7);  x[13] := x[13] xor LRot32(x[ 9]+x[ 5], 9);
-		x[ 1] := x[ 1] xor LRot32(x[13]+x[ 9],13);  x[ 5] := x[ 5] xor LRot32(x[ 1]+x[13],18);
-		x[14] := x[14] xor LRot32(x[10]+x[ 6], 7);  x[ 2] := x[ 2] xor LRot32(x[14]+x[10], 9);
-		x[ 6] := x[ 6] xor LRot32(x[ 2]+x[14],13);  x[10] := x[10] xor LRot32(x[ 6]+x[ 2],18);
-		x[ 3] := x[ 3] xor LRot32(x[15]+x[11], 7);  x[ 7] := x[ 7] xor LRot32(x[ 3]+x[15], 9);
-		x[11] := x[11] xor LRot32(x[ 7]+x[ 3],13);  x[15] := x[15] xor LRot32(x[11]+x[ 7],18);
-		x[ 1] := x[ 1] xor LRot32(x[ 0]+x[ 3], 7);  x[ 2] := x[ 2] xor LRot32(x[ 1]+x[ 0], 9);
-		x[ 3] := x[ 3] xor LRot32(x[ 2]+x[ 1],13);  x[ 0] := x[ 0] xor LRot32(x[ 3]+x[ 2],18);
-		x[ 6] := x[ 6] xor LRot32(x[ 5]+x[ 4], 7);  x[ 7] := x[ 7] xor LRot32(x[ 6]+x[ 5], 9);
-		x[ 4] := x[ 4] xor LRot32(x[ 7]+x[ 6],13);  x[ 5] := x[ 5] xor LRot32(x[ 4]+x[ 7],18);
-		x[11] := x[11] xor LRot32(x[10]+x[ 9], 7);  x[ 8] := x[ 8] xor LRot32(x[11]+x[10], 9);
-		x[ 9] := x[ 9] xor LRot32(x[ 8]+x[11],13);  x[10] := x[10] xor LRot32(x[ 9]+x[ 8],18);
-		x[12] := x[12] xor LRot32(x[15]+x[14], 7);  x[13] := x[13] xor LRot32(x[12]+x[15], 9);
-		x[14] := x[14] xor LRot32(x[13]+x[12],13);  x[15] := x[15] xor LRot32(x[14]+x[13],18);
-   end;
+		{
+			Reordering the assignments from the RFC gives us a free 27.4% speedup.
+			It works because there are operations that can be done that do not (yet) depend on the previous result.
+			So while one execution unit is calculating the sum+LRot and Xor of one tuple,
+			we can go ahead and start calculating on a different tuple.
+
+			|            |       Overall |
+			|------------|---------------|
+			| Original   | 11,264.682 ms |
+			| Rearranged |  8,178.178 ms |
+
+			TODO: Figure out a SIMD way to do these four parallel constructs in parallel.
+		}
+
+		{
+			Mix DWORDs together between chunks
+			  <--- 256 bits--->   <----- 256 bits ----->
+			  <128 b>   <128 b>   <128 bit>  <128 bits >
+			[ 0 1 2 3   4 5 6 7   8 9 10 11  12 13 14 15 ]
+			  a b   D   A b c       B  c  d  a      C  d
+			  a   C d   a b   D   A b	c         B  c  d
+			    B c d   a   C d   a b     D  A   b  c
+			  A b c       B c d   a    C  d  a   b     D
+		}
+		//First DWORD
+		x[ 4] := x[ 4] xor LRot32(x[ 0]+x[12], 7);
+		x[ 9] := x[ 9] xor LRot32(x[ 5]+x[ 1], 7);
+		x[14] := x[14] xor LRot32(x[10]+x[ 6], 7);
+		x[ 3] := x[ 3] xor LRot32(x[15]+x[11], 7);
+
+		//Second DWORD
+		x[ 8] := x[ 8] xor LRot32(x[ 4]+x[ 0], 9);
+		x[13] := x[13] xor LRot32(x[ 9]+x[ 5], 9);
+		x[ 2] := x[ 2] xor LRot32(x[14]+x[10], 9);
+		x[ 7] := x[ 7] xor LRot32(x[ 3]+x[15], 9);
+
+		//Third DWORD
+		x[12] := x[12] xor LRot32(x[ 8]+x[ 4],13);
+		x[ 1] := x[ 1] xor LRot32(x[13]+x[ 9],13);
+		x[ 6] := x[ 6] xor LRot32(x[ 2]+x[14],13);
+		x[11] := x[11] xor LRot32(x[ 7]+x[ 3],13);
+
+		//Fourth DWORD
+		x[ 0] := x[ 0] xor LRot32(x[12]+x[ 8],18);
+		x[ 5] := x[ 5] xor LRot32(x[ 1]+x[13],18);
+		x[10] := x[10] xor LRot32(x[ 6]+x[ 2],18);
+		x[15] := x[15] xor LRot32(x[11]+x[ 7],18);
+
+		{
+			Mix the DWORDs within each 16 byte set.
+
+			[ 0 1 2 3   4 5 6 7   8 9 10 11  12 13 14 15 ]
+			  a A   a   b b B       c  c  C   D     d  d
+			  a a A       b b B   C    c  c   d  D     d
+			    a a A   B   b b   c C     c   d  d  D
+			  A   a a   b B   b   c c  C         d  d  D
+		}
+		//Calculate first DWORD within each chunk
+		x[ 1] := x[ 1] xor LRot32(x[ 0]+x[ 3], 7);
+		x[ 6] := x[ 6] xor LRot32(x[ 5]+x[ 4], 7);
+		x[11] := x[11] xor LRot32(x[10]+x[ 9], 7);
+		x[12] := x[12] xor LRot32(x[15]+x[14], 7);
+
+		//Calculate second DWORD within each chunk
+		x[ 2] := x[ 2] xor LRot32(x[ 1]+x[ 0], 9);
+		x[ 7] := x[ 7] xor LRot32(x[ 6]+x[ 5], 9);
+		x[ 8] := x[ 8] xor LRot32(x[11]+x[10], 9);
+		x[13] := x[13] xor LRot32(x[12]+x[15], 9);
+
+		//Calculate third DWORD within each chunk
+		x[ 3] := x[ 3] xor LRot32(x[ 2]+x[ 1],13);
+		x[ 4] := x[ 4] xor LRot32(x[ 7]+x[ 6],13);
+		x[ 9] := x[ 9] xor LRot32(x[ 8]+x[11],13);
+		x[14] := x[14] xor LRot32(x[13]+x[12],13);
+
+		//Calculate fourth DWORD within each chunk
+		x[ 0] := x[ 0] xor LRot32(x[ 3]+x[ 2],18);
+		x[ 5] := x[ 5] xor LRot32(x[ 4]+x[ 7],18);
+		x[10] := x[10] xor LRot32(x[ 9]+x[ 8],18);
+		x[15] := x[15] xor LRot32(x[14]+x[13],18);
+	end;
 
 	//Result ← Input + X;
 	Result := PLongWordArray(@Input);
@@ -1432,7 +1495,7 @@ begin
 		Result[i+2] := Result[i+2] + X[i+2];
 		Result[i+3] := Result[i+3] + X[i+3];
 		Inc(i, 4);
-   end;
+	end;
 end;
 
 class function TScrypt.StringToBytes(const s: string): TBytes;
