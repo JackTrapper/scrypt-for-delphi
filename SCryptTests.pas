@@ -33,7 +33,6 @@ type
 		procedure SelfTest_Scrypt;
 
 		procedure Test_PasswordHash;
-
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -814,6 +813,7 @@ var
 	freq, t1, t2: Int64;
 begin
 	if not QueryPerformanceFrequency(freq) then freq := -1;
+
 	if not QueryPerformanceCounter(t1) then t1 := 0;
 	s := TScrypt.HashPassword('correct horse battery staple');
 	if not QueryPerformanceCounter(t2) then t2 := 0;
@@ -1242,17 +1242,24 @@ begin
 end;
 
 procedure TScryptTests.SelfTest_Scrypt;
+var
+	freq: Int64;
 
 	procedure test(password: string; salt: string; CostFactor, r, p: Integer; DesiredBytes: Integer; ExpectedHexString: string);
 	var
 		expected: TBytes;
 		actual: TBytes;
+		t1, t2: Int64;
 	begin
 		//N = CPU/memory cost parameter
 		//p = parallelization parameter
 		expected := HexToBytes(ExpectedHexString);
 
+		QueryPerformanceCounter(t1);
 		actual := FScrypt.GetBytes(password, salt, CostFactor, r, p, DesiredBytes);
+		QueryPerformanceCounter(t2);
+
+		Self.Status(Format('Test "%s" duration: %.3f ms', [password, (t2-t1)/freq*1000]));
 
 		if Length(expected) <> Length(actual) then
 			raise EScryptException.CreateFmt('Self-test failed: actual length (%d) does not match expected (%d)', [Length(actual), Length(expected)]);
@@ -1260,6 +1267,7 @@ procedure TScryptTests.SelfTest_Scrypt;
 		if not CompareMem(@expected[0], @actual[0], Length(expected)) then
 			raise EScryptException.Create('Scrypt self-test failed: data does not match');
 	end;
+
 begin
 	{
 		From the official PDF (http://www.tarsnap.com/scrypt/scrypt.pdf)
@@ -1270,6 +1278,9 @@ begin
 		the password and salt strings are passed as sequences of ASCII bytes without a
 		terminating NUL
 	}
+	if not QueryPerformanceFrequency(freq) then
+		freq := -1;
+
 	//uses 512 bytes
 	test('', '', {N=16=2^}4, {r=}1, {p=}1, 64,
 			'77 d6 57 62 38 65 7b 20 3b 19 ca 42 c1 8a 04 97 f1 6b 48 44 e3 07 4a e8 df df fa 3f ed e2 14 42'+
@@ -1285,10 +1296,12 @@ begin
 			'70 23 bd cb 3a fd 73 48 46 1c 06 cd 81 fd 38 eb fd a8 fb ba 90 4f 8e 3e a9 b5 43 f6 54 5d a1 f2'+
 			'd5 43 29 55 61 3f 0f cf 62 d4 97 05 24 2a 9a f9 e6 1e 85 dc 0d 65 1e 40 df cf 01 7b 45 57 58 87');
 
+	OutputDebugString('SAMPLING ON');
 	//uses 1 GB
 	test('pleaseletmein', 'SodiumChloride', {N=1048576=2^}20, {r=}8, {p=}1, 64,
 			'21 01 cb 9b 6a 51 1a ae ad db be 09 cf 70 f8 81 ec 56 8d 57 4a 2f fd 4d ab e5 ee 98 20 ad aa 47'+
 			'8e 56 fd 8f 4b a5 d0 9f fa 1c 6d 92 7c 40 f4 c3 37 30 40 49 e8 a9 52 fb cb f4 5c 6f a7 7a 41 a4');
+	OutputDebugString('SAMPLING OFF');
 end;
 
 procedure TScryptTests.SelfTest_SHA1;
