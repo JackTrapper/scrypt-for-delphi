@@ -9,17 +9,21 @@ type
 	TScryptTests = class(TTestCase)
 	protected
 		FScrypt: TScrypt;
+		FFreq: Int64;
 		procedure SetUp; override;
 		procedure TearDown; override;
 
+		function GetTimestamp: Int64;
 	public
-		procedure Benchmarks;
+		procedure ScryptBenchmarks;
 	published
 		//Even though we don't use SHA-1, we implemented it because PBKDF2_SHA1 is the only one with published test vectors
 		procedure SelfTest_SHA1;
+		procedure Test_SHA1_PurePascal_Benchmark;
 		procedure SelfTest_SHA1csp;
 		procedure SelfTest_HMAC_SHA1;
 		procedure Test_PBKDF2_SHA1;
+		procedure Test_PBKDF2_SHA1_Benchmark;
 
 		//Scrypt uses PBKDF2_SHA256
 		procedure SelfTest_SHA2_256;
@@ -33,6 +37,8 @@ type
 		procedure SelfTest_Scrypt;
 
 		procedure Test_PasswordHash;
+
+		procedure BenchmarkHashes;
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -254,6 +260,9 @@ begin
 	inherited;
 
 	FScrypt := TScrypt.Create;
+
+	if not QueryPerformanceFrequency(FFreq) then //it's documented to never fail, but it can (see SO).
+		FFreq := -1;
 end;
 
 procedure TScryptTests.TearDown;
@@ -493,7 +502,65 @@ begin
 	t('The quick brown fox jumps over the lazy dog', 'd7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592');
 end;
 
-procedure TScryptTests.Benchmarks;
+procedure TScryptTests.BenchmarkHashes;
+var
+	data: TBytes;
+
+	procedure Test(HashAlgorithmName: string);
+	var
+		hash: IHashAlgorithm;
+		t1, t2: Int64;
+	begin
+		hash := TScryptCracker.GetHashAlgorithm(HashAlgorithmName);
+
+		t1 := GetTimestamp;
+		hash.HashData(data[0], Length(data));
+		t2 := GetTimestamp;
+
+		Status(Format('%s: %.3f MB/s', [HashAlgorithmName, (Length(data)/1024/1024) / ((t2-t1)/FFreq)]));
+	end;
+begin
+	data := TScrypt.GetBytes('hash test', 'Scrypt for Delphi', 1, 1, 1, 1*1024*1024); //1 MB
+
+	Test('TSHA1');
+	Test('TSHA1csp');
+	Test('TSHA256');
+	Test('TSHA256csp');
+end;
+
+procedure TScryptTests.Test_SHA1_PurePascal_Benchmark;
+var
+	hash: IHashAlgorithm;
+	t1, t2: Int64;
+	data: TBytes;
+	best: Int64;
+	i: Integer;
+begin
+	hash := TScryptCracker.GetHashAlgorithm('TSHA1');
+	data := TScryptCracker(FScrypt).PBKDF2(hash, 'hash test', nil^, 0, 1, 1*1024*1024); //1 MB
+	best := 0;
+
+	OutputDebugString('SAMPLING ON');
+	for i := 1 to 60 do
+	begin
+		t1 := GetTimestamp;
+		hash.HashData(data[0], Length(data));
+		t2 := GetTimestamp;
+		if (((t2-t1) < best) or (best = 0)) then
+			best := (t2-t1);
+   end;
+	OutputDebugString('SAMPLING OFF');
+
+	Status(Format('%s: %.3f MB/s', ['TSHA1', (Length(data)/1024/1024) / (best/FFreq)]));
+end;
+
+function TScryptTests.GetTimestamp: Int64;
+begin
+	if not QueryPerformanceCounter(Result) then //it's documented to never fail; but it can. See SO
+		Result := 0;
+end;
+
+procedure TScryptTests.ScryptBenchmarks;
 var
 	freq, t1, t2: Int64;
 	N, r: Integer;
@@ -595,7 +662,7 @@ procedure TScryptTests.SelfTest_HMAC_SHA1;
 		digest: TBytes;
 		hash: IHashAlgorithm;
 	begin
-		hash := TScryptCracker.GetHashAlgorithm('TSHA1');
+		hash := TScryptCracker.GetHashAlgorithm('TSHA1csp');
 
 		digest := TScryptCracker(FScrypt).HMAC(hash, Key[1], Length(Key), Data[1], Length(Data));
 
@@ -830,15 +897,21 @@ end;
 
 procedure TScryptTests.Test_PBKDF2_SHA1;
 
+var
+	hash: IHashAlgorithm;
 	procedure t(Password: UnicodeString; Salt: AnsiString; IterationCount: Integer; DerivedKeyLength: Integer;
 			const ExpectedDerivedKey: array of byte);
 	var
 		derivedKey: TBytes; //derivedKey
-		hash: IHashAlgorithm;
+		t1, t2: Int64;
+		s: string;
 	begin
-		hash := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1');
-
+		t1 := Self.GetTimestamp;
 		derivedKey := TScryptCracker(FScrypt).PBKDF2(hash, Password, Salt[1], Length(Salt), IterationCount, DerivedKeyLength);
+		t2 := Self.GetTimestamp;
+
+		s := Format('%.3f ms', [(t2-t1)/FFreq*1000]);
+		Status(s);
 
 		if (DerivedKeyLength <> Length(derivedKey)) then
 			raise EScryptException.CreateFmt('Scrypt self-test failed: Derived key length (%d) wasn''t the required %d',
@@ -849,6 +922,13 @@ procedure TScryptTests.Test_PBKDF2_SHA1;
 					[Password, Salt, IterationCount, DerivedKeyLength]);
 	end;
 begin
+{$IFDEF MSWINDOWS}
+	hash := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1csp');
+{$ELSE}
+	hash := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1');
+{$ENDIF}
+
+
 {
 	PKCS #5: Password-Based Key Derivation Function 2 (PBKDF2) Test Vectors
 	http://tools.ietf.org/html/rfc6070
@@ -899,7 +979,7 @@ begin
 	  Output:
 		 DK = ee fe 3d 61 cd 4d a4 e4 e9 94 5b 3d 6b a2 15 8c 26 34 e9 84             (20 octets)
 }
-	//This test works, but it's 16,777,216 rounds
+	//This test passes, but it's 16,777,216 rounds (2m 17s)
 //	t('password', 'salt', 16777216, 20, [$ee,$fe,$3d,$61,$cd,$4d,$a4,$e4,$e9,$94,$5b,$3d,$6b,$a2,$15,$8c,$26,$34,$e9,$84]);
 
 {
@@ -927,6 +1007,22 @@ begin
 }
 	t('pass'#0'word', 'sa'#0'lt', 4096, 16,
 			[$56,$fa,$6a,$a7,$55,$48,$09,$9d,$cc,$37,$d7,$f0,$34,$25,$e0,$c3]);
+end;
+
+procedure TScryptTests.Test_PBKDF2_SHA1_Benchmark;
+var
+	hash: IHashAlgorithm;
+	t1, t2: Int64;
+begin
+	hash := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1'); //fastest SHA1
+
+	OutputDebugString('SAMPLING ON');
+	t1 := GetTimestamp;
+	TScryptCracker(FScrypt).PBKDF2(hash, 'foo', 'bar', 3, 1, 10*1024*1024);
+	t2 := GetTimestamp;
+	OutputDebugString('SAMPLING OFF');
+
+	Status(Format('%.2f ms', [(t2-t1)/FFreq*1000]));
 end;
 
 procedure TScryptTests.Test_Salsa208Core;

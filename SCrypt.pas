@@ -1082,9 +1082,14 @@ end;
 function TScrypt.HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
 var
 	oKeyPad, iKeyPad: TBytes;
-	i: Integer;
+	i, n: Integer;
 	digest: TBytes;
 	blockSize: Integer;
+
+type
+	PUInt64Array = ^TUInt64Array_Unsafe;
+	TUInt64Array_Unsafe = array[0..MaxInt div 16] of UInt64;
+
 begin
 	{
 		Implementation of RFC2104  HMAC: Keyed-Hashing for Message Authentication
@@ -1119,13 +1124,24 @@ begin
 			iKeyPad = key xor 0x36
 			oKeyPad = key xor 0x5c
 
-		TODO: Unroll this to blockSize div 4 xor's of $5c5c5c5c and $36363636
+		DONE: Unroll this to blockSize div 4 xor's of $5c5c5c5c and $36363636
 	}
-   for i := 0 to blockSize-1 do
-   begin
-      oKeyPad[i] := oKeyPad[i] xor $5c;
-      iKeyPad[i] := iKeyPad[i] xor $36;
-   end;
+	n := blockSize div SizeOf(UInt64);
+	for i := 0 to n-1 do
+		PUInt64Array(@oKeyPad[0])[i] := PUInt64Array(@oKeyPad[0])[i] xor UInt64($5c5c5c5c5c5c5c5c);
+	for i := 0 to n-1 do
+		PUInt64Array(@iKeyPad[0])[i] := PUInt64Array(@iKeyPad[0])[i] xor UInt64($3636363636363636);
+	n := blockSize mod SizeOf(UInt64);
+	if n <> 0 then
+	begin
+		//This should never happen in practice.
+		//Hash block sizes are going to be multiple of 8 bytes
+		for i := blockSize-1-n to blockSize-1 do
+		begin
+			oKeyPad[i] := oKeyPad[i] xor $5c;
+			iKeyPad[i] := iKeyPad[i] xor $36;
+		end;
+	end;
 
 	{
 		Result := hash(oKeyPad || hash(iKeyPad || message))
@@ -1174,6 +1190,9 @@ begin
 	}
 //	if DerivedKeyLength > 2^32*hLen then
 //		raise Exception.Create('Derived key too long');
+
+	if hash = nil then
+		raise EScryptException.Create('No hash algorithm supplied');
 
 	hLen := Hash.DigestSize;
 
@@ -1384,7 +1403,7 @@ end;
 
 procedure TScrypt.Salsa20InPlace(var Input);
 var
-	X: PLongWordArray;
+//	X: PLongWordArray;
 	i: Integer;
 	Result: PLongWordArray;
 	x00, x01, x02, x03,
@@ -1395,7 +1414,7 @@ begin
 {
 	The 64-byte input x to Salsa20 is viewed in little-endian form as 16 UInt32's
 }
-	//Storing array values in local variables can avoid array bounds checking every time, giving 4.4% performance boost
+	//Storing array values in local variables can avoid array bounds checking and indirection lookups every time, giving 4.4% performance boost
 	{
 		|       |        Overall |
 		|-------|----------------|
@@ -1506,15 +1525,6 @@ begin
 
 	//Result ← Input + X;
 	Result := PLongWordArray(@Input);
-{	i := 0;
-	while (i < 15) do
-	begin
-		Result[i  ] := Result[i  ] + X[i  ];
-		Result[i+1] := Result[i+1] + X[i+1];
-		Result[i+2] := Result[i+2] + X[i+2];
-		Result[i+3] := Result[i+3] + X[i+3];
-		Inc(i, 4);
-	end;}
 	Result[ 0] := Result[ 0] + X00;
 	Result[ 1] := Result[ 1] + X01;
 	Result[ 2] := Result[ 2] + X02;
@@ -1704,9 +1714,11 @@ var
 	i: Integer;
 	blocks: Integer;
 	n: Integer;
+
 type
 	PUInt64Array = ^TUInt64Array_Unsafe;
 	TUInt64Array_Unsafe = array[0..MaxInt div 16] of UInt64;
+
 begin
 	//DONE: Unroll to 8-byte chunks
 	//TODO: Detect 128-bit or 256-bit SIMD available, and unroll to XOR 16 or 32 bytes at at time.
@@ -1721,9 +1733,6 @@ begin
 
 		Note: Inlining this function has no performance improvement (if anything its 0.0007% slower)
 	}
-//	for i := 0 to Length-1 do
-//		PByteArray(@A)[i] := PByteArray(@A)[i] xor PByteArray(@B)[i];
-
 	blocks := Length div SizeOf(UInt64); //optimizes to "shr 3" anyway
 	for i := 0 to blocks-1 do
 		PUInt64Array(@A)[i] := PUInt64Array(@A)[i] xor PUInt64Array(@B)[i];
@@ -1759,7 +1768,7 @@ begin
 	FHashBufferIndex := 0;
 	FillChar(FHashBuffer[0], Length(FHashBuffer), 0);
 
-	//And the current state of the hash
+	//And reset the current state of the hash to the default starting values
 	FABCDEBuffer[0] := $67452301;
 	FABCDEBuffer[1] := $EFCDAB89;
 	FABCDEBuffer[2] := $98BADCFE;
@@ -1774,22 +1783,75 @@ procedure TSHA1.Compress;
 var
 	A, B, C, D, E: LongWord;  //temporary buffer storage#1
 	TEMP: LongWord;  //temporary buffer for a single Word
-	W: array[0..79] of LongWord;  //temporary buffer storage#2
-	tCount: integer;  //counter
+	Wt: array[0..79] of LongWord;  //temporary buffer storage#2
+	W: PLongWordArray;
+	i: integer;  //counter
+
+	function LRot32_5(const X: LongWord): LongWord; inline;
+	begin
+		Result := (X shl 5) or (X shr 27);
+	end;
 begin
 	{Reset HashBuffer index since it can now be reused
 		(well, not _now_, but after .Compress}
 	FHashBufferIndex := 0;
 
+	W := PLongWordArray(@Wt[0]); //9.02% speedup by defeating range checking
+
 	{Move HashBuffer into W, and change the Endian order}
-	Move(FHashBuffer[0], W[0], SizeOf(FHashBuffer) );
-	for tCount := 0 to 15 do
-		W[tCount] := ByteSwap(W[tCount]);
+	i := 0;
+	while (i < 16) do
+	begin
+		//TODO: This can be vectorized
+		W[i  ] := ByteSwap(PLongWordArray(@FHashBuffer[0])[i  ]);
+		W[i+1] := ByteSwap(PLongWordArray(@FHashBuffer[0])[i+1]);
+		W[i+2] := ByteSwap(PLongWordArray(@FHashBuffer[0])[i+2]);
+		W[i+3] := ByteSwap(PLongWordArray(@FHashBuffer[0])[i+3]);
+		Inc(i, 4);
+	end;
 
 	{Step B in 'FIPS PUB 180-1'
-	 - Calculate the rest of Wt}
-	for tCount := 16 to 79 do
-		W[tCount]:= LRot32(W[tCount-3] xor W[tCount-8] xor W[tCount-14] xor W[tCount-16],1);
+	 - Calculate the rest of Wt
+
+	0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18
+	*   *           *            *        =
+	  *   *           *             *        =
+	    *   *           *             *         =
+	}
+	//160.5 MB/s
+//	for i := 16 to 79 do
+//		W[i] := LRot32(W[i-3] xor W[i- 8] xor W[i-14] xor W[i-16], 1); //164 MB/s
+
+	{
+		https://software.intel.com/en-us/articles/improving-the-performance-of-the-secure-hash-algorithm-1/
+		https://blogs.oracle.com/DanX/entry/optimizing_solaris_x86_sha_1
+   }
+	//159.5 MB/s
+{	for i := 16 to 31 do
+		W[i] := LRot32(W[i-3] xor W[i- 8] xor W[i-14] xor W[i-16], 1); //164 MB/s
+	for i := 32 to 79 do
+		W[i] := LRot32(W[i-6] xor W[i-16] xor W[i-28] xor W[i-32], 2); //168 MB/s}
+
+
+	//172 MB/s
+	while (i < 32) do //16..31, 16 calculations, 2 at at time = 8 loops
+	begin
+		//This represents the form that can be vectorized: Two independant calculations at a time
+		W[i  ] := LRot32(W[i-3] xor W[i-8] xor W[i-14] xor W[i-16], 1);
+		W[i+1] := LRot32(W[i-2] xor W[i-7] xor W[i-13] xor W[i-15], 1); //Delphi is unable to optimize -3+1 or 1-3 as -2
+		Inc(i, 2);
+	end;
+	while (i < 80) do //32..79, 48 calculations, 6 at a time = 8 loops
+	begin
+		//This represents the form that can be vectorized: Six independant calcuations at a time
+		W[i  ] := LRot32(W[i-6] xor W[i-16] xor W[i-28] xor W[i-32], 2);
+		W[i+1] := LRot32(W[i-5] xor W[i-15] xor W[i-27] xor W[i-31], 2);
+		W[i+2] := LRot32(W[i-4] xor W[i-14] xor W[i-26] xor W[i-30], 2);
+		W[i+3] := LRot32(W[i-3] xor W[i-13] xor W[i-25] xor W[i-29], 2);
+		W[i+4] := LRot32(W[i-2] xor W[i-12] xor W[i-24] xor W[i-28], 2);
+		W[i+5] := LRot32(W[i-1] xor W[i-11] xor W[i-23] xor W[i-27], 2);
+		Inc(i, 6)
+   end;
 
 	{Step C in 'FIPS PUB 180-1'
 	 - Copy the CurrentHash into the ABCDE buffer}
@@ -1801,13 +1863,10 @@ begin
 
 	{Step D in 'FIPS PUB 180-1}
 	{t=0..19 uses fa}
-	for tCount:= 0 to 19 do
+	for i := 0 to 19 do
 	begin
 	{$Q-}
-		TEMP :=
-				LRot32(A, 5) +
-				(D xor (B and (C xor D))) +
-				E + W[tCount] + $5A827999;
+		TEMP := (D xor (B and (C xor D))) + E + LRot32_5(A) + W[i] + $5A827999;
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -1816,13 +1875,10 @@ begin
 	end;
 
 	{t=20..39 uses fb}
-	for tCount := 20 to 39 do
+	for i := 20 to 39 do
 	begin
 	{$Q-}
-		TEMP :=
-				LRot32(A, 5) +
-				(B xor C xor D) +
-				E + W[tCount] + $6ED9EBA1;
+		TEMP := (B xor C xor D) + E + LRot32_5(A) + W[i] + $6ED9EBA1;
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -1831,13 +1887,10 @@ begin
 	end;
 
 	{t=40..59 uses fc}
-	for tCount := 40 to 59 do
+	for i := 40 to 59 do
 	begin
 	{$Q-}
-		TEMP :=
-				LRot32(A, 5) +
-				((B and C) or (D and (B or C)))+
-				E + W[tCount] + $8F1BBCDC;
+		TEMP := ((B and C) or (D and (B or C))) + E + LRot32_5(A) + W[i] + $8F1BBCDC;
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -1846,13 +1899,10 @@ begin
 	end;
 
 	{t60..79 uses fd}
-	for tCount := 60 to 79 do
+	for i := 60 to 79 do
 	begin
 	{$Q-}
-		TEMP :=
-				LRot32(A, 5) +
-				(B xor C xor D) +
-				E + W[tCount] + $CA62C1D6;
+		TEMP := (B xor C xor D) + E + LRot32_5(A) + W[i] + $CA62C1D6;
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -1869,8 +1919,9 @@ begin
 	FABCDEBuffer[4] := FABCDEBuffer[4] + E;
 
 	{Clear out W and the HashBuffer}
-	FillChar(W[0], SizeOf(W), 0);
-	FillChar(FHashBuffer[0], SizeOf(FHashBuffer), 0);
+	//14% faster by not doing these here
+//	FillChar(W[0], SizeOf(W), 0); we don't *need* to empty W.
+//	FillChar(FHashBuffer[0], SizeOf(FHashBuffer), 0);  //HashFinal takes care of this
 end;
 
 function TSHA1.GetBlockSize: Integer;
@@ -1921,21 +1972,22 @@ begin
 			Move(buffer[dataOffset], FHashBuffer[FHashBufferIndex], bytesRemainingInHashBuffer);
 			Dec(dummySize, bytesRemainingInHashBuffer);
 			Inc(dataOffset, bytesRemainingInHashBuffer);
-			Compress;
+			Self.Compress;
 		end
 		else
 		begin
-{ 20070508  Ian Boyd
-		If the input length was not an even multiple of HashBufferSize (64 bytes i think), then
-			there was a buffer overrun. Rather than Moving and incrementing by DummySize
-			it was using cbSize, which is the size of the original buffer}
-
-			{If there isn't enough data to fill the HashBuffer...}
-			{...copy as much as possible from the buffer into HashBuffer...}
+			{
+				20070508  Ian Boyd
+				If the input length was not an even multiple of HashBufferSize (64 bytes i think),
+				then there was a buffer overrun. Rather than Moving and incrementing by DummySize
+				it was using cbSize, which is the size of the original buffer
+			}
+			//If there isn't enough data to fill the HashBuffer...
+			//...copy as much as possible from the buffer into HashBuffer...
 			Move(buffer[dataOffset], FHashBuffer[FHashBufferIndex], dummySize);
-			{then move the HashBuffer Index to the next empty spot in HashBuffer}
+			//then move the HashBuffer Index to the next empty spot in HashBuffer
 			Inc(FHashBufferIndex, dummySize);
-			{And shrink the size in the buffer to zero}
+			//And shrink the size in the buffer to zero
 			dummySize := 0;
 		end;
 	end;
@@ -1957,6 +2009,10 @@ begin
 	{Tack on the final bit 1 to the end of the data}
 	FHashBuffer[FHashBufferIndex] := $80;
 
+	//Zero out the byes from the $80 marker to the end of the buffer
+	FillChar(FHashBuffer[FHashBufferIndex+1], 63-FHashBufferIndex, 0);
+
+
 	{[56] is the start of the 2nd last word in HashBuffer}
 	{if we are at (or past) it, then there isn't enough room for the whole
 		message length (64-bits i.e. 2 words) to be added in}
@@ -1964,7 +2020,10 @@ begin
 	  all the way to the end), since it the remaining zeros are prescribed padding
 	  anyway}
 	if FHashBufferIndex >= 56 then
+	begin
 		Compress;
+		FillChar(FHashBuffer[0], 64, 0);
+	end;
 
 	{Write in LenHi (it needs it's endian order changed)}
 	{LenHi is the high order word of the Length of the message in bits}
