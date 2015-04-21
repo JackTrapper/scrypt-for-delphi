@@ -21,12 +21,14 @@ type
 		procedure SelfTest_SHA1;
 		procedure Test_SHA1_PurePascal_Benchmark;
 		procedure SelfTest_SHA1csp;
+
 		procedure SelfTest_HMAC_SHA1;
 		procedure Test_PBKDF2_SHA1;
 		procedure Test_PBKDF2_SHA1_Benchmark;
 
 		//Scrypt uses PBKDF2_SHA256
 		procedure SelfTest_SHA2_256;
+		procedure Test_SHA2_256_Benchmark;
 		procedure SelfTest_SHA256csp;
 		procedure SelfTest_HMAC_SHA256;
 		procedure SelfTest_PBKDF2_SHA256;
@@ -517,11 +519,12 @@ var
 		hash.HashData(data[0], Length(data));
 		t2 := GetTimestamp;
 
-		Status(Format('%s: %.3f MB/s', [HashAlgorithmName, (Length(data)/1024/1024) / ((t2-t1)/FFreq)]));
+		Status(Format('%s		%.3f MB/s', [HashAlgorithmName, (Length(data)/1024/1024) / ((t2-t1)/FFreq)]));
 	end;
 begin
 	data := TScrypt.GetBytes('hash test', 'Scrypt for Delphi', 1, 1, 1, 1*1024*1024); //1 MB
 
+	Status(Format('%s		%s', ['Algorithm', 'Speed (MB/s)']));
 	Test('TSHA1');
 	Test('TSHA1csp');
 	Test('TSHA256');
@@ -540,6 +543,33 @@ begin
 	data := TScryptCracker(FScrypt).PBKDF2(hash, 'hash test', nil^, 0, 1, 1*1024*1024); //1 MB
 	best := 0;
 
+	OutputDebugString('SAMPLING ON');
+	for i := 1 to 60 do
+	begin
+		t1 := GetTimestamp;
+		hash.HashData(data[0], Length(data));
+		t2 := GetTimestamp;
+		if (((t2-t1) < best) or (best = 0)) then
+			best := (t2-t1);
+	end;
+	OutputDebugString('SAMPLING OFF');
+
+	Status(Format('%s: %.3f MB/s', ['TSHA1', (Length(data)/1024/1024) / (best/FFreq)]));
+end;
+
+procedure TScryptTests.Test_SHA2_256_Benchmark;
+var
+	hash: IHashAlgorithm;
+	t1, t2: Int64;
+	data: TBytes;
+	best: Int64;
+	i: Integer;
+begin
+	hash := TScryptCracker.GetHashAlgorithm('TSHA1');
+	data := TScryptCracker(FScrypt).PBKDF2(hash, 'hash test', nil^, 0, 1, 1*1024*1024); //1 MB
+	best := 0;
+
+	hash := TScryptCracker.GetHashAlgorithm('TSHA256');
 	OutputDebugString('SAMPLING ON');
 	for i := 1 to 60 do
 	begin

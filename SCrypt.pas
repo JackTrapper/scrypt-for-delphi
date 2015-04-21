@@ -246,8 +246,10 @@ type
 	PLongWordArray = ^TLongWordArray_Unsafe;
 	TLongWordArray_Unsafe = array[0..15] of LongWord;
 
-function RRot32(X: LongWord; c: Byte): LongWord; inline;
+function RRot32(const X: LongWord; const c: Byte): LongWord; inline;
 begin
+	//Any use of assembly is dwarfed by the fact that ASM functions cannot be inlined
+	//Which forces a function call. Which drops us from 82MB/s -> 50 MB/s
 	Result := (X shr c) or (X shl (32-c));
 end;
 
@@ -1833,7 +1835,7 @@ begin
 		W[i] := LRot32(W[i-6] xor W[i-16] xor W[i-28] xor W[i-32], 2); //168 MB/s}
 
 
-	//172 MB/s
+	//176 MB/s
 	while (i < 32) do //16..31, 16 calculations, 2 at at time = 8 loops
 	begin
 		//This represents the form that can be vectorized: Two independant calculations at a time
@@ -1862,11 +1864,13 @@ begin
 	E := FABCDEBuffer[4];
 
 	{Step D in 'FIPS PUB 180-1}
+	//These calculations are 15% faster if the XOR and ROT happen at the end of each assignment.
+	//I don't know why; but we are where we are.
 	{t=0..19 uses fa}
 	for i := 0 to 19 do
 	begin
 	{$Q-}
-		TEMP := (D xor (B and (C xor D))) + E + LRot32_5(A) + W[i] + $5A827999;
+		TEMP := $5A827999 + E + W[i] + (D xor (B and (C xor D))) + LRot32_5(A);
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -1878,7 +1882,7 @@ begin
 	for i := 20 to 39 do
 	begin
 	{$Q-}
-		TEMP := (B xor C xor D) + E + LRot32_5(A) + W[i] + $6ED9EBA1;
+		TEMP := $6ED9EBA1 + E + W[i] + (B xor C xor D) + LRot32_5(A);
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -1890,7 +1894,7 @@ begin
 	for i := 40 to 59 do
 	begin
 	{$Q-}
-		TEMP := ((B and C) or (D and (B or C))) + E + LRot32_5(A) + W[i] + $8F1BBCDC;
+		TEMP := $8F1BBCDC + E + W[i] + ((B and C) or (D and (B or C))) + LRot32_5(A);
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -1902,7 +1906,7 @@ begin
 	for i := 60 to 79 do
 	begin
 	{$Q-}
-		TEMP := (B xor C xor D) + E + LRot32_5(A) + W[i] + $CA62C1D6;
+		TEMP := $CA62C1D6 + E + W[i] + (B xor C xor D) + LRot32_5(A);
 		E := D;
 		D := C;
 		C := LRot32(B, 30);
@@ -2096,8 +2100,9 @@ var
 	t: Integer;
 	s0, s1, ch, maj: LongWord;
 	temp1, temp2: LongWord;  //temporary buffer for a single Word
-	W: array[0..79] of LongWord;  //temporary buffer storage#2
+	Wt: array[0..79] of LongWord;  //temporary buffer storage#2
 //	tCount: integer;  //counter
+	W: PLongWordArray;
 
 const
 	K: array[0..63] of LongWord = (
@@ -2112,6 +2117,8 @@ const
 	);
 
 begin
+	W := PLongWordArray(@Wt[0]);
+
 	{1. Prepare the message schedule W from the block we're processing. Start with the first 16 bytes}
 	//Move(FHashBuffer[0], W[0], SizeOf(FHashBuffer) );
 	for t := 0 to 15 do
@@ -2142,18 +2149,28 @@ begin
 	for t := 0 to 63 do
 	begin
 	{$Q-}
-		S1 := RRot32(e, 6) xor RRot32(e, 11) xor RRot32(e, 25); //Σ₁(e)
+		//S0, ch, maj, S1, temp1, temp2, 79.5 MB/s
+		//ch, S0, maj, S1, temp1, temp2: 78.5 MB/s
+		//S0, S1, ch, maj, temp1, temp2: 74.8 MB/s
+{		S0 := RRot32(a, 2) xor RRot32(a, 13) xor RRot32(a, 22); //Σ₀(a)
 		ch :=  (e and f) xor ((not e) and g); //Choose(e,f,g)
-		temp1 := h + S1 + ch + K[t] + W[t];
-		S0 := RRot32(a, 2) xor RRot32(a, 13) xor RRot32(a, 22); //Σ₀(a)
 		maj := (a and b) xor (a and c) xor (b and c); //Majority(a,b,c)
-		temp2 := S0 + maj;
+		S1 := RRot32(e, 6) xor RRot32(e, 11) xor RRot32(e, 25); //Σ₁(e)
+		temp1 := h + S1 + ch + K[t] + W[t];
+		temp2 := S0 + maj;}
+
+		//83.2 MB/s
+
+		temp1 := h + (RRot32(e, 6) xor RRot32(e, 11) xor RRot32(e, 25)) + ((e and f) xor ((not e) and g)) + K[t] + W[t];
 
 		h := g;
 		g := f;
 		f := e;
 		e := d + temp1;
 		d := c;
+
+		temp2 := (RRot32(a, 2) xor RRot32(a, 13) xor RRot32(a, 22)) + ((a and b) xor (a and c) xor (b and c));
+
 		c := b;
 		b := a;
 		a := temp1 + temp2;
