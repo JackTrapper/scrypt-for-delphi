@@ -70,8 +70,6 @@ Scrypt uses three parameters to tune CPU and memory usage:
 
 - **ParallelizationFactor**: determines how many independant calculations have to be performed (`p`)
 
-![operation](./Images/Operation.png)
-
 The default parameters given in the original whitepaper are:
 
 - **CostFactor (cf)**: 14 (N = 2<sup>14</sup> = 16,384)
@@ -79,6 +77,14 @@ The default parameters given in the original whitepaper are:
 - **Parallelization Factor (p)**: 1
 
 Note: Most scrypt documentation uses **Cost (N)**, which is a large value and a power of two. We adopt the BCrypt convention of expressing a **Cost Factor**, which is the log_2(Cost).
+
+Algorithm
+==========
+
+Scrypt uses the standard PBDKF2 function to generate the desired number of bytes. The password fed to PBKDF2 is the user password. The virtue of Scrypt is its expensive generation of the salt to be fed into PBKDF2:
+
+![operation](./Images/ScryptBlockDiagram.png)
+
  
 
 Created by Ian Boyd, 4/9/2015, and released into the [public domain](http://unlicense.org/)
