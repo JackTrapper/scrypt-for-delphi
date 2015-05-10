@@ -246,6 +246,85 @@ type
 	PLongWordArray = ^TLongWordArray_Unsafe;
 	TLongWordArray_Unsafe = array[0..15] of LongWord;
 
+
+//Cryptography Next Generation (Cng) items
+	BCRYPT_HANDLE = THandle;
+	BCRYPT_ALG_HANDLE = THandle;
+	BCRYPT_KEY_HANDLE = THandle;
+	BCRYPT_HASH_HANDLE = THandle;
+	NTSTATUS = Cardinal;
+
+const
+	// Microsoft built-in providers. (OpenAlgorithmProvider.pszImplementation)
+	MS_PRIMITIVE_PROVIDER: UnicodeString = 'Microsoft Primitive Provider';
+	MS_PLATFORM_CRYPTO_PROVIDER: UnicodeString = 'Microsoft Platform Crypto Provider'; //i.e. TPM
+
+	// OpenAlgorithmProvider.AlgorithmID
+	BCRYPT_SHA256_ALGORITHM = 'SHA256';
+
+	// BCryptGetProperty property name
+	BCRYPT_OBJECT_LENGTH: UnicodeString = 'ObjectLength';
+
+var
+	_BCryptInitialized: Boolean = False;
+	_BCryptAvailable: Boolean = False;
+	_BCryptOpenAlgorithmProvider: function(out hAlgorithm: BCRYPT_ALG_HANDLE; pszAlgId, pszImplementation: PWideChar; dwFlags: Cardinal): NTSTATUS; stdcall;
+	_BCryptCloseAlgorithmProvider: function(hAlgorithm: BCRYPT_ALG_HANDLE; dwFlags: Cardinal): NTSTATUS; stdcall;
+	_BCryptGetProperty: function(hObject: BCRYPT_HANDLE; pszProperty: PWideChar; {out}pbOutput: Pointer; cbOutput: Cardinal; out cbResult: Cardinal; dwFlags: Cardinal): NTSTATUS; stdcall;
+	_BCryptCreateHash: function(hAlgorithm: BCRYPT_ALG_HANDLE; out hHash: BCRYPT_HASH_HANDLE; pbHashObject: Pointer; cbHashObject: Cardinal; pbSecret: Pointer; cbSecret: Cardinal; dwFlags: DWORD): NTSTATUS; stdcall;
+	_BCryptHashData: function(hHash: BCRYPT_HASH_HANDLE; pbInput: Pointer; cbInput: Cardinal; dwFlags: Cardinal): NTSTATUS; stdcall;
+	_BCryptFinishHash: function(hHash: BCRYPT_HASH_HANDLE; pbOutput: Pointer; cbOutput: Cardinal; dwFlags: Cardinal): NTSTATUS; stdcall;
+	_BCryptDestroyHash: function(hHash: BCRYPT_HASH_HANDLE): NTSTATUS; stdcall;
+	_BCryptGenRandom: function({In_opt}hAlgorithm: BCRYPT_ALG_HANDLE; {Inout}pbBuffer: Pointer; cbBuffer: Cardinal; dwFlags: Cardinal): NTSTATUS; stdcall;
+
+function FormatNTStatusMessage(const NTStatusMessage: NTSTATUS): string;
+var
+	Buffer: PChar;
+	Len: Integer;
+	Hand: HMODULE;
+begin
+	{
+		KB259693: How to translate NTSTATUS error codes to message strings
+
+		Obtain the formatted message for the given Win32 ErrorCode
+		Let the OS initialize the Buffer variable. Need to LocalFree it afterward.
+  }
+	Hand := SafeLoadLibrary('ntdll.dll');
+
+	Len := FormatMessage(
+			FORMAT_MESSAGE_ALLOCATE_BUFFER or
+			FORMAT_MESSAGE_FROM_SYSTEM or
+//			FORMAT_MESSAGE_IGNORE_INSERTS or
+//			FORMAT_MESSAGE_ARGUMENT_ARRAY or
+			FORMAT_MESSAGE_FROM_HMODULE,
+			Pointer(Hand),
+			NTStatusMessage, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			@Buffer, 0, nil);
+	try
+		//Remove the undesired line breaks and '.' char
+		while (Len > 0) and (CharInSet(Buffer[Len - 1], [#0..#32, '.'])) do Dec(Len);
+		//Convert to Delphi string
+		SetString(Result, Buffer, Len);
+	finally
+		//Free the OS allocated memory block
+		LocalFree(HLOCAL(Buffer));
+	end;
+	FreeLibrary(Hand);
+end;
+
+procedure NTStatusCheck(Status: NTSTATUS);
+const
+	SNTError = 'NT Error 0x%.8x: %s';
+begin
+	if (Status and $80000000) = 0 then //00: success, 01:information, 10: warning, 11: error
+		Exit;
+
+	raise EOleSysError.CreateFmt(SNTError, [
+			HResultFromNT(Status),
+			FormatNTStatusMessage(Status)
+	]);
+end;
+
 function RRot32(const X: LongWord; const c: Byte): LongWord; inline;
 begin
 	//Any use of assembly is dwarfed by the fact that ASM functions cannot be inlined
@@ -351,6 +430,35 @@ type
 	public
 		constructor Create;
 		destructor Destroy; override;
+
+		procedure HashData(const Buffer; BufferLen: Integer);
+		function Finalize: TBytes;
+	end;
+
+{
+	Hash algorithms provided by the Microsoft Cryptography Next Generation (Cng) Provider
+}
+	TCngHash = class(TInterfacedObject, IHashAlgorithm)
+	private
+		FAlgorithm: BCRYPT_ALG_HANDLE;
+		FHashObjectBuffer: TBytes;
+		FHash: BCRYPT_HASH_HANDLE;
+	protected
+		procedure RequireBCrypt;
+		function GetBlockSize: Integer; //e.g. SHA-1 compresses in blocks of 64 bytes
+		function GetDigestSize: Integer; //e.g. SHA-1 digest is 20 bytes (160 bits)
+
+		class function InitializeBCrypt: Boolean;
+
+		procedure Initialize;
+		procedure Burn;
+		procedure HashCore(const Data; DataLen: Integer);
+		function HashFinal: TBytes;
+	public
+		constructor Create(const AlgorithmID: UnicodeString; const Provider: PWideChar);
+		destructor Destroy; override;
+
+		class function IsAvailable: Boolean;
 
 		procedure HashData(const Buffer; BufferLen: Integer);
 		function Finalize: TBytes;
@@ -963,7 +1071,10 @@ begin
 	inherited Create;
 
 {$IFDEF MSWINDOWS}
-	FHash := TSHA256csp.Create;
+	if TCngHash.IsAvailable then
+		FHash := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil) //Windows Vista or later
+	else
+		FHash := TSHA256csp.Create; //Microsoft SHA256 CSP is about 87% faster than our "PurePascal" version
 {$ELSE}
 	FHash := TSHA256.Create;
 {$ENDIF}
@@ -1007,8 +1118,13 @@ class function TScrypt.GetHashAlgorithm(const HashAlgorithmName: string): IHashA
 const
 	sha1='TSHA1';
 	sha1csp='TSHA1csp';
+	sha1cng='TSHA1Cng';
 	sha256='TSHA256';
 	sha256csp='TSHA256csp';
+	sha256cng='TSHA256Cng';
+
+	BCRYPT_SHA1_ALGORITHM = 'SHA1';
+	BCRYPT_SHA256_ALGORITHM = 'SHA256';
 begin
 	{
 		We contain a number of hash algorithms.
@@ -1023,12 +1139,16 @@ begin
 	}
 	if AnsiSameText(HashAlgorithmName, sha1) then
 		Result := TSHA1.Create
-   else if AnsiSameText(HashAlgorithmName, sha1csp) then
+	else if AnsiSameText(HashAlgorithmName, sha1csp) then
 		Result := TSHA1csp.Create
+	else if AnsiSameText(HashAlgorithmName, sha1cng) then
+		Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil)
 	else if AnsiSameText(HashAlgorithmName, sha256) then
 		Result := TSHA256.Create
 	else if AnsiSameText(HashAlgorithmName, sha256csp) then
 		Result := TSHA256csp.Create
+	else if AnsiSAmeText(HashAlgorithmName, sha256cng) then
+		Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil)
 	else
 		raise Exception.CreateFmt('Unknown hash algorithm "%s" requested', [HashAlgorithmName]);
 end;
@@ -2098,7 +2218,7 @@ procedure TSHA256.Compress;
 var
 	a, b, c, d, e, f, g, h: LongWord;  //temporary buffer storage#1
 	t: Integer;
-	s0, s1, ch, maj: LongWord;
+	s0, s1: LongWord;
 	temp1, temp2: LongWord;  //temporary buffer for a single Word
 	Wt: array[0..79] of LongWord;  //temporary buffer storage#2
 //	tCount: integer;  //counter
@@ -2561,8 +2681,8 @@ var
 	le: DWORD;
 const
 	PROV_RSA_AES = 24; //Provider type; from WinCrypt.h
-	MS_ENH_RSA_AES_PROV_W: UnicodeString = 'Microsoft Enhanced RSA and AES Cryptographic Provider'; //Provider name
-	MS_ENH_RSA_AES_PROV_XP_W: UnicodeString = 'Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)'; //Provider name
+//	MS_ENH_RSA_AES_PROV_W: UnicodeString = 'Microsoft Enhanced RSA and AES Cryptographic Provider'; //Provider name
+//	MS_ENH_RSA_AES_PROV_XP_W: UnicodeString = 'Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)'; //Provider name
 
 begin
 	inherited Create;
@@ -2572,13 +2692,13 @@ begin
 			providerName = "Microsoft Enhanced RSA and AES Cryptographic Provider"
 			providerName = "Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)"  //Windows XP and earlier
 	}
-	providerName := MS_ENH_RSA_AES_PROV_W;
+{	providerName := MS_ENH_RSA_AES_PROV_W;
 	//Before Vista it was a prototype provider
 	if (Win32MajorVersion < 6) then //6.0 was Vista and Server 2008
-		providerName := MS_ENH_RSA_AES_PROV_XP_W;
+		providerName := MS_ENH_RSA_AES_PROV_XP_W;}
 
 //	if not CryptAcquireContext(provider, nil, PWideChar(providerName), PROV_RSA_AES, CRYPT_VERIFYCONTEXT) then
-	if not CryptAcquireContext(provider, nil, nil, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) then
+	if not CryptAcquireContext({out}provider, nil, nil, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) then
 	begin
 		le := GetLastError;
 		RaiseOSError(le, Format('Could not acquire context to provider "%s" (Win32MajorVersion=%d)',
@@ -2668,6 +2788,185 @@ begin
 	end;
 
 	FHash := hash;
+end;
+
+{ TSHA1Cng }
+
+procedure TCngHash.Burn;
+begin
+	if FHash <> 0 then
+	begin
+		_BCryptDestroyHash(FHash);
+		FHash := 0;
+		ZeroMemory(@FHashObjectBuffer[0], Length(FHashObjectBuffer));
+	end;
+end;
+
+constructor TCngHash.Create(const AlgorithmID: UnicodeString; const Provider: PWideChar);
+var
+	nts: NTSTATUS;
+	algorithm: BCRYPT_ALG_HANDLE;
+	objectLength: DWORD;
+	bytesReceived: Cardinal;
+begin
+	inherited Create;
+
+	Self.RequireBCrypt;
+
+	nts := _BCryptOpenAlgorithmProvider({out}algorithm,
+			PWideChar(AlgorithmID), //Algorithm: e.g. BCRYPT_SHA1_ALGORITHM ("SHA1")
+			Provider, //Provider. nil ==> default
+			0 //dwFlags
+			);
+	NTStatusCheck(nts);
+
+	FAlgorithm := algorithm;
+
+	//Get the length of the hash data object, so we can provide the required buffer
+	nts := _BCryptGetProperty(algorithm,
+			PWideChar(BCRYPT_OBJECT_LENGTH), @objectLength, SizeOf(objectLength), {out}bytesReceived, 0);
+	NTStatusCheck(nts);
+
+	SetLength(FHashObjectBuffer, objectLength);
+
+	Self.Initialize;
+end;
+
+destructor TCngHash.Destroy;
+begin
+	Self.Burn;
+
+	if FAlgorithm <> 0 then
+	begin
+		_BCryptCloseAlgorithmProvider(FAlgorithm, 0);
+		FAlgorithm := 0;
+	end;
+
+	inherited;
+end;
+
+function TCngHash.Finalize: TBytes;
+begin
+	Result := Self.HashFinal;
+	Self.Initialize; //Get ready for another round of hashing
+end;
+
+function TCngHash.GetBlockSize: Integer;
+const
+	BCRYPT_HASH_BLOCK_LENGTH = 'HashBlockLength';
+var
+	blockSize: DWORD;
+	bytesReceived: Cardinal;
+	nts: NTSTATUS;
+begin
+	//Get the hash block size
+	nts := _BCryptGetProperty(FAlgorithm, PWideChar(BCRYPT_HASH_BLOCK_LENGTH), @blockSize, SizeOf(blockSize), {out}bytesReceived, 0);
+	NTStatusCheck(nts);
+
+	Result := Integer(blockSize);
+end;
+
+function TCngHash.GetDigestSize: Integer;
+const
+	BCRYPT_HASH_LENGTH = 'HashDigestLength';
+var
+	digestSize: DWORD;
+	bytesReceived: Cardinal;
+	nts: NTSTATUS;
+begin
+	//Get the length of the hash digest
+	nts := _BCryptGetProperty(FAlgorithm, PWideChar(BCRYPT_HASH_LENGTH), @digestSize, SizeOf(digestSize), {out}bytesReceived, 0);
+	NTStatusCheck(nts);
+
+	Result := Integer(digestSize);
+end;
+
+procedure TCngHash.HashCore(const Data; DataLen: Integer);
+var
+	hr: NTSTATUS;
+begin
+	hr := _BCryptHashData(FHash, Pointer(@Data), DataLen, 0);
+	NTStatusCheck(hr);
+end;
+
+procedure TCngHash.HashData(const Buffer; BufferLen: Integer);
+begin
+	Self.HashCore(Buffer, BufferLen);
+end;
+
+function TCngHash.HashFinal: TBytes;
+var
+	digestSize: DWORD;
+	hr: NTSTATUS;
+begin
+	digestSize := Self.GetDigestSize;
+	SetLength(Result, digestSize);
+
+	hr :=_BCryptFinishHash(FHash, @Result[0], digestSize, 0);
+	NTStatusCheck(hr);
+end;
+
+procedure TCngHash.Initialize;
+var
+	hash: BCRYPT_HASH_HANDLE;
+	hr: NTSTATUS;
+begin
+	Self.Burn;
+
+	hr := _BCryptCreateHash(FAlgorithm, {out}hash, @FHashObjectBuffer[0], Length(FHashObjectBuffer), nil, 0, 0);
+	NTStatusCheck(hr);
+
+	FHash := hash;
+end;
+
+class function TCngHash.InitializeBCrypt: Boolean;
+var
+	moduleHandle: HMODULE;
+	p: Pointer;
+	available: Boolean;
+
+	function GetProcedureAddress(procedureName: UnicodeString; var FunctionFound: Boolean): Pointer;
+	begin
+		Result := GetProcAddress(moduleHandle, PWideChar(procedureName));
+		if Result = nil then
+			FunctionFound := False;
+   end;
+const
+	BCrypt = 'BCrypt.dll';
+begin
+	if (not _BCryptInitialized) then
+	begin
+		moduleHandle := SafeLoadLibrary(PChar(BCrypt));
+		if moduleHandle <> 0 then
+		begin
+			available := True;
+
+			_BCryptOpenAlgorithmProvider := GetProcedureAddress('BCryptOpenAlgorithmProvider', available);
+			_BCryptCloseAlgorithmProvider := GetProcedureAddress('BCryptCloseAlgorithmProvider', available);
+			_BCryptGenRandom := GetProcedureAddress('BCryptGenRandom', available);
+			_BCryptCreateHash := GetProcedureAddress('BCryptCreateHash', available);
+			_BCryptHashData := GetProcedureAddress('BCryptHashData', available);
+			_BCryptFinishHash := GetProcedureAddress('BCryptFinishHash', available);
+			_BCryptDestroyHash := GetProcedureAddress('BCryptDestroyHash', available);
+			_BCryptGetProperty := GetProcedureAddress('BCryptGetProperty', available);
+
+			_BCryptAvailable := available;
+		end;
+		_BCryptInitialized := True;
+	end;
+
+	Result := _BCryptAvailable;
+end;
+
+class function TCngHash.IsAvailable: Boolean;
+begin
+	Result := TCngHash.InitializeBCrypt;
+end;
+
+procedure TCngHash.RequireBCrypt;
+begin
+	if not TCngHash.InitializeBCrypt then
+		raise Exception.Create('BCrypt not available. Requires Windows Vista or greater');
 end;
 
 end.

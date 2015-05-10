@@ -21,6 +21,7 @@ type
 		procedure SelfTest_SHA1;
 		procedure Test_SHA1_PurePascal_Benchmark;
 		procedure SelfTest_SHA1csp;
+		procedure SelfTest_SHA1Cng;
 
 		procedure SelfTest_HMAC_SHA1;
 		procedure Test_PBKDF2_SHA1;
@@ -30,6 +31,7 @@ type
 		procedure SelfTest_SHA2_256;
 		procedure Test_SHA2_256_Benchmark;
 		procedure SelfTest_SHA256csp;
+		procedure SelfTest_SHA256cng;
 		procedure SelfTest_HMAC_SHA256;
 		procedure SelfTest_PBKDF2_SHA256;
 
@@ -240,6 +242,14 @@ begin
 end;
 
 { TScryptTests }
+
+procedure TScryptTests.SelfTest_SHA256cng;
+var
+	sha256: IHashAlgorithm;
+begin
+	sha256 := TScryptCracker.GetHashAlgorithm('TSHA256cng');
+	TSHA256Tester.Test(sha256);
+end;
 
 procedure TScryptTests.SelfTest_SHA256csp;
 var
@@ -527,8 +537,10 @@ begin
 	Status(Format('%s		%s', ['Algorithm', 'Speed (MB/s)']));
 	Test('TSHA1');
 	Test('TSHA1csp');
+	Test('TSHA1Cng');
 	Test('TSHA256');
 	Test('TSHA256csp');
+	Test('TSHA256Cng');
 end;
 
 procedure TScryptTests.Test_SHA1_PurePascal_Benchmark;
@@ -1044,7 +1056,7 @@ var
 	hash: IHashAlgorithm;
 	t1, t2: Int64;
 begin
-	hash := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1'); //fastest SHA1
+	hash := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1csp'); //fastest SHA1
 
 	OutputDebugString('SAMPLING ON');
 	t1 := GetTimestamp;
@@ -1435,6 +1447,14 @@ var
 	sha1: IHashAlgorithm;
 begin
 	sha1 := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1');
+	TSHA1Tester.Test(sha1);
+end;
+
+procedure TScryptTests.SelfTest_SHA1Cng;
+var
+	sha1: IHashAlgorithm;
+begin
+	sha1 := TScryptCracker(FScrypt).GetHashAlgorithm('TSHA1Cng');
 	TSHA1Tester.Test(sha1);
 end;
 
