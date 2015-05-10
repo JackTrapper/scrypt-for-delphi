@@ -61,6 +61,11 @@
 	Version History
 	===============
 
+	Version 1.2   20150510
+			- Use Cryptography Next Generation (Cng) API for SHA256 (requires Windows Vista or later)
+			- Will still fallback to SHA256 CryptoApi CSP (Windows 2000) when on Windows platform
+			- still falls back to internal PurePascal implementation if not WINDOWS
+
 	Version 1.1   20150415
 			- Support for actually verifying a password hash
 			- 43% faster due to optimizations in XorBlock and Salsa20
