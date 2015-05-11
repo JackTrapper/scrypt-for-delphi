@@ -183,7 +183,7 @@ type
 			Let people have access to our hash functions. They've been tested and verified, and they work well.
 			Besides, we have HMAC and PBKDF2. That's gotta be useful for someone.
 		}
-		class function GetHashAlgorithm(const HashAlgorithmName: string): IHashAlgorithm;
+		class function GetHashAlgorithm(HashAlgorithmName: string): IHashAlgorithm;
 	public
 		constructor Create;
 
@@ -251,7 +251,12 @@ type
 	PLongWordArray = ^TLongWordArray_Unsafe;
 	TLongWordArray_Unsafe = array[0..15] of LongWord;
 
+const
+	//Cryptography Service Provider (CSP) items
+	CALG_SHA1 = $00008004;
+	CALG_SHA_256 = $0000800c;
 
+type
 //Cryptography Next Generation (Cng) items
 	BCRYPT_HANDLE = THandle;
 	BCRYPT_ALG_HANDLE = THandle;
@@ -420,9 +425,11 @@ type
 {
 	SHA-1 implemented by Microsoft Crypto Service Provider (CSP)
 }
-	TSHA1csp = class(TInterfacedObject, IHashAlgorithm)
+	TCspHash = class(TInterfacedObject, IHashAlgorithm)
 	private
 		FProvider: HCRYPTPROV;
+		FAlgorithmID: Cardinal; //CALG_SHA1, CALG_SHA256
+		FBlockSize: Integer; //CSP doesn't provide a way to get the block size of a hash
 		FHash: HCRYPTHASH;
 	protected
 		function GetBlockSize: Integer; //SHA-1 compresses in blocks of 64 bytes
@@ -433,7 +440,7 @@ type
 		procedure HashCore(const Data; DataLen: Integer);
 		function HashFinal: TBytes;
 	public
-		constructor Create;
+		constructor Create(AlgorithmID: Cardinal; BlockSize: Integer);
 		destructor Destroy; override;
 
 		procedure HashData(const Buffer; BufferLen: Integer);
@@ -493,29 +500,6 @@ type
 		procedure Initialize;
 	public
 		constructor Create;
-
-		procedure HashData(const Buffer; BufferLen: Integer);
-		function Finalize: TBytes;
-	end;
-
-{
-	SHA-256 implemented by Microsoft Crypto Service Provider (CSP)
-}
-	TSHA256csp = class(TInterfacedObject, IHashAlgorithm)
-	private
-		FProvider: HCRYPTPROV;
-		FHash: HCRYPTHASH;
-	protected
-		function GetBlockSize: Integer;
-		function GetDigestSize: Integer;
-
-		procedure Initialize;
-		procedure Burn;
-		procedure HashCore(const Data; DataLen: Integer);
-		function HashFinal: TBytes;
-	public
-		constructor Create;
-		destructor Destroy; override;
 
 		procedure HashData(const Buffer; BufferLen: Integer);
 		function Finalize: TBytes;
@@ -1075,14 +1059,7 @@ constructor TScrypt.Create;
 begin
 	inherited Create;
 
-{$IFDEF MSWINDOWS}
-	if TCngHash.IsAvailable then
-		FHash := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil) //Windows Vista or later
-	else
-		FHash := TSHA256csp.Create; //Microsoft SHA256 CSP is about 87% faster than our "PurePascal" version
-{$ELSE}
-	FHash := TSHA256.Create;
-{$ENDIF}
+	FHash := TScrypt.GetHashAlgorithm('SHA256'); //the best one available
 end;
 
 function TScrypt.GenerateSalt: TBytes;
@@ -1119,43 +1096,71 @@ begin
    end;
 end;
 
-class function TScrypt.GetHashAlgorithm(const HashAlgorithmName: string): IHashAlgorithm;
+class function TScrypt.GetHashAlgorithm(HashAlgorithmName: string): IHashAlgorithm;
 const
-	sha1='TSHA1';
-	sha1csp='TSHA1csp';
-	sha1cng='TSHA1Cng';
-	sha256='TSHA256';
-	sha256csp='TSHA256csp';
-	sha256cng='TSHA256Cng';
-
 	BCRYPT_SHA1_ALGORITHM = 'SHA1';
 	BCRYPT_SHA256_ALGORITHM = 'SHA256';
+
+	SUnknownAlgorithm = 'Unknown hash algorithm "%s" requested';
+
+	function IsAlgo(s: string): Boolean;
+	begin
+		Result := AnsiSameText(HashAlgorithmName, s);
+   end;
 begin
 	{
 		We contain a number of hash algorithms.
 		It might be nice to let people outside us to get ahold of them.
 
-		| HashAlgorithmName | Class         | Description                  |
-		|-------------------|---------------|------------------------------|
-		| 'TSHA1'           | TSHA1         | SHA-1, native Pascal         |
-		| 'TSHA1csp'        | TSHA1csp      | SHA-1 using Microsoft CSP    |
-		| 'TSHA256'         | TSHA256       | SHA2-256, native Pascal      |
-		| 'TSHA256csp'      | TSHA256csp    | ShA2-256 using Microsoft CSP |
+		| HashAlgorithmName | Class         | Description                   |
+		|-------------------|---------------|-------------------------------|
+		| 'SHA1'            |               | SHA-1, best implementation    |
+		| 'SHA1PurePascal'  | TSHA1         | SHA-1, pure pascal            |
+		| 'SHA1csp'         | TCspHash      | SHA-1, Crypto API             |
+		| 'SHA1Cng'         | TSHA1csp      | SHA-1, Crypto Next Gen (Cng)  |
+		| 'SHA256'          |               | SHA256, best implementation   |
+		| 'SHA256PurePascal | TSHA256       | SHA256, pure pascal           |
+		| 'SHA256csp'       | TCspHash      | SHA256, Crypto API            |
+		| 'SHA256Cng'       | TCngHash      | SHA256, Crypto Next Gen (Cng) |
 	}
-	if AnsiSameText(HashAlgorithmName, sha1) then
-		Result := TSHA1.Create
-	else if AnsiSameText(HashAlgorithmName, sha1csp) then
-		Result := TSHA1csp.Create
-	else if AnsiSameText(HashAlgorithmName, sha1cng) then
-		Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil)
-	else if AnsiSameText(HashAlgorithmName, sha256) then
-		Result := TSHA256.Create
-	else if AnsiSameText(HashAlgorithmName, sha256csp) then
-		Result := TSHA256csp.Create
-	else if AnsiSAmeText(HashAlgorithmName, sha256cng) then
-		Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil)
+	if AnsiSameText(HashAlgorithmName, 'SHA1') then
+	begin
+{$IFDEF MSWINDOWS}
+		//Microsoft SHA1 Cng and CSP versions are about 87% faster than our "PurePascal" versions
+		if TCngHash.IsAvailable then
+			HashAlgorithmName := 'SHA1Cng'
+		else
+			HashAlgorithmName := 'SHA1csp';
+{$ELSE}
+		HashAlgorithmName := 'SHA1PurePascal';
+{$ENDIF}
+		Result := TScrypt.GetHashAlgorithm(HashAlgorithmName);
+		Exit;
+   end;
+
+	if AnsiSameText(HashAlgorithmName, 'SHA256') then
+	begin
+{$IFDEF MSWINDOWS}
+		//Microsoft SHA256 Cng and CSP versions are about 87% faster than our "PurePascal" versions
+		if TCngHash.IsAvailable then
+			HashAlgorithmName := 'SHA256Cng'
+		else
+			HashAlgorithmName := 'SHA256csp';
+{$ELSE}
+		HashAlgorithmName := 'SHA256PurePascal';
+{$ENDIF}
+		Result := TScrypt.GetHashAlgorithm(HashAlgorithmName);
+		Exit;
+	end;
+
+	if      IsAlgo('SHA1PurePascal')   then Result := TSHA1.Create
+	else if IsAlgo('SHA1csp')          then Result := TCspHash.Create(CALG_SHA1, 64)
+	else if IsAlgo('SHA1Cng')          then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil)
+	else if IsAlgo('SHA256PurePascal') then Result := TSHA256.Create
+	else if IsAlgo('SHA256csp')        then Result := TCspHash.Create(CALG_SHA_256, 64)
+	else if IsAlgo('SHA256Cng')        then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil)
 	else
-		raise Exception.CreateFmt('Unknown hash algorithm "%s" requested', [HashAlgorithmName]);
+		raise Exception.CreateFmt(SUnknownAlgorithm, [HashAlgorithmName]);
 end;
 
 class function TScrypt.HashPassword(const Passphrase: UnicodeString): string;
@@ -2505,8 +2510,6 @@ const
 
 	CALG_AES_128 = (ALG_CLASS_DATA_ENCRYPT or ALG_TYPE_BLOCK or ALG_SID_AES_128);
 	CALG_AES_256 = (ALG_CLASS_DATA_ENCRYPT or ALG_TYPE_BLOCK or ALG_SID_AES_256);
-	CALG_SHA1 = $00008004;
-	CALG_SHA_256 = $0000800c;
 
 function CryptAcquireContext(out phProv: HCRYPTPROV; pszContainer: PWideChar; pszProvider: PWideChar; dwProvType: DWORD; dwFlags: DWORD): BOOL; stdcall; external advapi32 name 'CryptAcquireContextW';
 function CryptReleaseContext(hProv: HCRYPTPROV; dwFlags: DWORD): BOOL; stdcall; external advapi32;
@@ -2523,144 +2526,9 @@ function CryptDestroyHash(hHash: HCRYPTHASH): BOOL; stdcall; external advapi32;
 //function CryptDecrypt(hKey: HCRYPTKEY; hHash: HCRYPTHASH; Final: BOOL; dwFlags: DWORD; pbData: PByte; var pdwDataLen: DWORD): BOOL; stdcall; external advapi32;
 
 
-procedure TSHA256csp.Burn;
-var
-	le: DWORD;
-begin
-	if FHash = 0 then
-		Exit;
-
-	try
-		if not CryptDestroyHash(FHash) then
-		begin
-	     	le := GetLastError;
-			RaiseOSError(le, Format('Could not destroy current hash provider: %s (%d)', [SysErrorMessage(le), le]));
-			Exit;
-		end;
-	finally
-		FHash := 0;
-   end;
-end;
-
-constructor TSHA256csp.Create;
-var
-	providerName: UnicodeString;
-	provider: HCRYPTPROV;
-	le: DWORD;
-const
-	PROV_RSA_AES = 24; //Provider type; from WinCrypt.h
-	MS_ENH_RSA_AES_PROV_W: UnicodeString = 'Microsoft Enhanced RSA and AES Cryptographic Provider'; //Provider name
-	MS_ENH_RSA_AES_PROV_XP_W: UnicodeString = 'Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)'; //Provider name
-
-begin
-	inherited Create;
-
-	{
-		Set ProviderName to either
-			providerName = "Microsoft Enhanced RSA and AES Cryptographic Provider"
-			providerName = "Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)"  //Windows XP and earlier
-	}
-	providerName := MS_ENH_RSA_AES_PROV_W;
-	//Before Vista it was a prototype provider
-	if (Win32MajorVersion < 6) then //6.0 was Vista and Server 2008
-		providerName := MS_ENH_RSA_AES_PROV_XP_W;
-
-//	if not CryptAcquireContext(provider, nil, PWideChar(providerName), PROV_RSA_AES, CRYPT_VERIFYCONTEXT) then
-	if not CryptAcquireContext(provider, nil, nil, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) then
-	begin
-		le := GetLastError;
-		RaiseOSError(le, Format('Could not acquire context to provider "%s" (Win32MajorVersion=%d)',
-				[providerName, Win32MajorVersion]));
-	end;
-
-	FProvider := provider;
-
-	Self.Initialize;
-end;
-
-destructor TSHA256csp.Destroy;
-begin
-	Self.Burn;
-
-	if FProvider <> 0 then
-	begin
-		CryptReleaseContext(FProvider, 0);
-		FProvider := 0;
-	end;
-
-  inherited;
-end;
-
-function TSHA256csp.Finalize: TBytes;
-begin
-	Result := Self.HashFinal;
-	Self.Initialize;
-end;
-
-function TSHA256csp.GetBlockSize: Integer;
-begin
-	Result := 64; //64-bytes per message block
-end;
-
-function TSHA256csp.GetDigestSize: Integer;
-begin
-	Result := 32; //SHA-256 has a digest size of 32 bytes (256-bits).
-end;
-
-procedure TSHA256csp.HashCore(const Data; DataLen: Integer);
-var
-	le: DWORD;
-begin
-	if (FHash = 0) then
-		raise Exception.Create('TSHA256csp is not initialized');
-
-	if not CryptHashData(FHash, PByte(@Data), DataLen, 0) then
-	begin
-		le := GetLastError;
-		raise Exception.CreateFmt('Error hashing data: %s (%d)', [SysErrorMessage(le), le]);
-	end;
-end;
-
-procedure TSHA256csp.HashData(const Buffer; BufferLen: Integer);
-begin
-	Self.HashCore(Buffer, BufferLen);
-end;
-
-function TSHA256csp.HashFinal: TBytes;
-var
-	digestSize: DWORD;
-	le: DWORD;
-begin
-	digestSize := Self.GetDigestSize;
-	SetLength(Result, digestSize);
-
-	if not CryptGetHashParam(FHash, HP_HASHVAL, @Result[0], digestSize, 0) then
-	begin
-		le := GetLastError;
-		raise Exception.CreateFmt('Could not get Hash value from CSP: %s (%d)', [SysErrorMessage(le), le]);
-   end;
-end;
-
-procedure TSHA256csp.Initialize;
-var
-	le: DWORD;
-	hash: THandle;
-begin
-	Self.Burn;
-
-	if not CryptCreateHash(FProvider, CALG_SHA_256, 0, 0, {out}hash) then
-	begin
-		le := GetLastError;
-		RaiseOSError(le, Format('Could not create CALC_SHA_256 hash: %s (%d)', [SysErrorMessage(le), le]));
-		Exit;
-	end;
-
-	FHash := hash;
-end;
-
 { TSHA1csp }
 
-procedure TSHA1csp.Burn;
+procedure TCspHash.Burn;
 var
 	le: DWORD;
 begin
@@ -2679,7 +2547,7 @@ begin
    end;
 end;
 
-constructor TSHA1csp.Create;
+constructor TCspHash.Create(AlgorithmID: Cardinal; BlockSize: Integer);
 var
 	providerName: UnicodeString;
 	provider: HCRYPTPROV;
@@ -2711,11 +2579,13 @@ begin
 	end;
 
 	FProvider := provider;
+	FAlgorithmID := AlgorithmID;
+	FBlockSize := BlockSize; //SHA1: 64 bytes, SHA256: 64 bytes
 
 	Self.Initialize;
 end;
 
-destructor TSHA1csp.Destroy;
+destructor TCspHash.Destroy;
 begin
 	Self.Burn;
 
@@ -2728,28 +2598,35 @@ begin
   inherited;
 end;
 
-function TSHA1csp.Finalize: TBytes;
+function TCspHash.Finalize: TBytes;
 begin
 	Result := Self.HashFinal;
 	Self.Initialize; //Get ready for another round of hashing
 end;
 
-function TSHA1csp.GetBlockSize: Integer;
+function TCspHash.GetBlockSize: Integer;
 begin
-	Result := 64; //block size of SHA1 is 64 bytes (512 bits)
+//	Result := 64; //block size of SHA1 is 64 bytes (512 bits)
+	Result := FBlockSize; //64 for SHA1, 64 for SHA256
 end;
 
-function TSHA1csp.GetDigestSize: Integer;
+function TCspHash.GetDigestSize: Integer;
+var
+	dataLen: Cardinal;
 begin
-	Result := 20; //digest size of SHA-1 is 160 bits (20 bytes)
+//	Result := 20; //digest size of SHA-1 is 160 bits (20 bytes)
+
+	dataLen := SizeOf(Result);
+	if not CryptGetHashParam(FHash, HP_HASHSIZE, @Result, dataLen, 0) then
+		RaiseLastOSError;
 end;
 
-procedure TSHA1csp.HashCore(const Data; DataLen: Integer);
+procedure TCspHash.HashCore(const Data; DataLen: Integer);
 var
 	le: DWORD;
 begin
 	if (FHash = 0) then
-		raise Exception.Create('TSHA256csp is not initialized');
+		raise Exception.Create('TCspHash is not initialized');
 
 	if not CryptHashData(FHash, PByte(@Data), DataLen, 0) then
 	begin
@@ -2758,12 +2635,12 @@ begin
 	end;
 end;
 
-procedure TSHA1csp.HashData(const Buffer; BufferLen: Integer);
+procedure TCspHash.HashData(const Buffer; BufferLen: Integer);
 begin
 	Self.HashCore(Buffer, BufferLen);
 end;
 
-function TSHA1csp.HashFinal: TBytes;
+function TCspHash.HashFinal: TBytes;
 var
 	digestSize: DWORD;
 	le: DWORD;
@@ -2778,17 +2655,19 @@ begin
    end;
 end;
 
-procedure TSHA1csp.Initialize;
+procedure TCspHash.Initialize;
 var
 	le: DWORD;
 	hash: THandle;
+const
+	SCouldNotCreate = 'Could not create hash: %s (0x%.8x)';
 begin
 	Self.Burn;
 
-	if not CryptCreateHash(FProvider, CALG_SHA1, 0, 0, {out}hash) then
+	if not CryptCreateHash(FProvider, FAlgorithmID, 0, 0, {out}hash) then
 	begin
 		le := GetLastError;
-		RaiseOSError(le, Format('Could not create CALG_SHA1 hash: %s (%d)', [SysErrorMessage(le), le]));
+		RaiseOSError(le, Format(SCouldNotCreate, [SysErrorMessage(le), le]));
 		Exit;
 	end;
 
