@@ -40,6 +40,7 @@ The `TScrypt` class also supports being used for password hashing (i.e. storage 
 By convention TScrypt outputs a password hash as string in the form:
 
     $s1$NNrrpp$salt$hash
+    $s1$131003$aXzuBr2qvisBj/bl7vr2pe$ksOS0sSZD38pZ8Nr/Zucq6fZrSLrQJTwXMmpSRvK4fGmyHg/ivJnd/dTDMICZO3uVvCxL/tQqjlLCK6bfz31Ju
 
 The parts of the string are:
 
