@@ -7,6 +7,8 @@ uses
 
 type
 	TScryptTests = class(TTestCase)
+	private
+		procedure Test_Scrypt_PasswordFormatting;
 	protected
 		FScrypt: TScrypt;
 		FFreq: Int64;
@@ -35,14 +37,15 @@ type
 		procedure SelfTest_HMAC_SHA256;
 		procedure SelfTest_PBKDF2_SHA256;
 
+		procedure BenchmarkHashes;
+
 		procedure Test_Salsa208Core;
 		procedure Test_BlockMix;
 		procedure Test_ROMix;
 		procedure SelfTest_Scrypt;
+		procedure Test_PasswordHashing;
 
-		procedure Test_PasswordHash;
-
-		procedure BenchmarkHashes;
+		procedure Test_PasswordHashPerformance;
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -952,7 +955,7 @@ begin
 			{HMAC-SHA-256}	'9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2');
 end;
 
-procedure TScryptTests.Test_PasswordHash;
+procedure TScryptTests.Test_PasswordHashPerformance;
 var
 	s: string;
 	freq, t1, t2: Int64;
@@ -971,6 +974,18 @@ begin
 	Self.CheckTrue(TScrypt.CheckPassword('correct horse battery staple', s));
 	if not QueryPerformanceCounter(t2) then t2 := 0;
 	Status(Format('Time to verify password: %.3f ms', [(t2-t1)/freq*1000]));
+end;
+
+procedure TScryptTests.Test_PasswordHashing;
+var
+	password: string;
+	hash: string;
+begin
+	password := 'correct horse battery staple';
+
+	hash := TScrypt.HashPassword(password);
+
+	CheckTrue(TScrypt.CheckPassword(password, hash));
 end;
 
 procedure TScryptTests.Test_PBKDF2_SHA1;
@@ -1153,6 +1168,11 @@ begin
 
 	Self.CheckEquals(Length(expected), Length(inData), 'Salsa20/8 in-place array length');
 	Self.CheckEqualsMem(@expected[0], @inData[0], Length(expected), 'Salsa20/8 in-place data failed');
+end;
+
+procedure TScryptTests.Test_Scrypt_PasswordFormatting;
+begin
+
 end;
 
 procedure TScryptTests.Test_BlockMix;

@@ -65,6 +65,10 @@
 			- Use Cryptography Next Generation (Cng) API for SHA256 (requires Windows Vista or later)
 			- Will still fallback to SHA256 CryptoApi CSP (Windows 2000) when on Windows platform
 			- still falls back to internal PurePascal implementation if not WINDOWS
+			- Changed the strings to pass to TScrypt.GetHashAlgorithm
+			- Calling TScrypt.GetHashAlgoritm with "SHA1" or "SHA256" will now choose the best algorithm implementation
+			- Pass "SHA1PurePascal" or "SHA256PurePascal" to specifically get the pure pascal versions
+			- FIX: HashPassword overload that takes custom cost parameters was using stack garbage for salt
 
 	Version 1.1   20150415
 			- Support for actually verifying a password hash
@@ -1201,14 +1205,14 @@ begin
 	}
 	scrypt := TScrypt.Create;
 	try
-		scrypt.GenerateSalt;
+		salt := scrypt.GenerateSalt;
 
 		derivedBytes := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, ParallelizationFactor, SCRYPT_HASH_LEN);
 
 		Result := scrypt.FormatPasswordHash(costFactor, blockSizeFactor, ParallelizationFactor, salt, derivedBytes);
-   finally
+	finally
 		scrypt.Free;
-   end;
+	end;
 end;
 
 function TScrypt.HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
