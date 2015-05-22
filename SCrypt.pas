@@ -151,9 +151,19 @@ type
 		property DigestSize: Integer read GetDigestSize;
 	end;
 
+	IHmacAlgorithm = interface(IInterface)
+		['{815787A8-D5E7-41C0-9F23-DF30D1532C49}']
+		function GetDigestSize: Integer;
+		function HashData(const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
+		property DigestSize: Integer read GetDigestSize;
+	end;
+
+	IPBKDF2Algorithm = interface(IInterface)
+		['{93BB60D0-2C87-46CB-8A2A-A711F0BBEF0D}']
+		function GetBytes(const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
+	end;
+
 	TScrypt = class(TObject)
-	private
-		FHash: IHashAlgorithm; //the SHA2 algorithm used by PBKDF2/HMAC
 	protected
 		procedure BurnBytes(var data: TBytes);
 		class function StringToBytes(const s: string): TBytes;
@@ -167,10 +177,10 @@ type
 		class function Tokenize(const s: string; Delimiter: Char): TArray<string>;
 		function GenerateSalt: TBytes;
 
-		procedure XorBlockInPlace(var A; const B; Length: Integer);
+		class procedure XorBlockInPlace(var A; const B; Length: Integer);
 
-		function HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
-		function PBKDF2(const Hash: IHashAlgorithm; const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
+		function PBKDF2(const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
+
 
 		function Salsa20(const Input): TBytes; //four round version of Salsa20, termed Salsa20/8
 		procedure Salsa20InPlace(var Input);
@@ -187,7 +197,7 @@ type
 			Let people have access to our hash functions. They've been tested and verified, and they work well.
 			Besides, we have HMAC and PBKDF2. That's gotta be useful for someone.
 		}
-		class function GetHashAlgorithm(HashAlgorithmName: string): IHashAlgorithm;
+      class function CreateObject(ObjectName: string): IInterface;
 	public
 		constructor Create;
 
@@ -198,11 +208,12 @@ type
 		class function GetBytes(const Passphrase: UnicodeString; const Salt: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; DesiredBytes: Integer): TBytes; overload;
 
 		{
-			Scrypt is meant for key generation. But people still use it for password hashing.
+			Scrypt is meant for key generation. But people can still use it for password storage.
 		}
 		class function HashPassword(const Passphrase: UnicodeString): string; overload;
 		class function HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string; overload;
 		class function CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: UnicodeString): Boolean;
+
 	end;
 
 	EScryptException = class(Exception);
@@ -276,6 +287,9 @@ const
 	// OpenAlgorithmProvider.AlgorithmID
 	BCRYPT_SHA256_ALGORITHM = 'SHA256';
 
+	// OpenAlgorithmProvider.dwFlags
+	BCRYPT_ALG_HANDLE_HMAC_FLAG = $00000008;
+
 	// BCryptGetProperty property name
 	BCRYPT_OBJECT_LENGTH: UnicodeString = 'ObjectLength';
 
@@ -290,6 +304,7 @@ var
 	_BCryptFinishHash: function(hHash: BCRYPT_HASH_HANDLE; pbOutput: Pointer; cbOutput: Cardinal; dwFlags: Cardinal): NTSTATUS; stdcall;
 	_BCryptDestroyHash: function(hHash: BCRYPT_HASH_HANDLE): NTSTATUS; stdcall;
 	_BCryptGenRandom: function({In_opt}hAlgorithm: BCRYPT_ALG_HANDLE; {Inout}pbBuffer: Pointer; cbBuffer: Cardinal; dwFlags: Cardinal): NTSTATUS; stdcall;
+	_BCryptDeriveKeyPBKDF2: function(hPrf: BCRYPT_ALG_HANDLE; pbPassword: Pointer; cbPassword: Cardinal; pbSalt: Pointer; cbSalt: Cardinal; cIterations: UInt64; pbDerivedKey: Pointer; cbDerivedKey: Cardinal; dwFlags: Cardinal): NTSTATUS; stdcall;
 
 function FormatNTStatusMessage(const NTStatusMessage: NTSTATUS): string;
 var
@@ -397,7 +412,7 @@ type
 	ALG_ID = LongWord; //unsigned int
 
 
-{ SHA1 implemented in Pascal}
+{ SHA1 implemented in PurePascal}
 type
 	TSHA1 = class(TInterfacedObject, IHashAlgorithm)
 	private
@@ -454,11 +469,16 @@ type
 {
 	Hash algorithms provided by the Microsoft Cryptography Next Generation (Cng) Provider
 }
-	TCngHash = class(TInterfacedObject, IHashAlgorithm)
+	TCngHash = class(TInterfacedObject, IHashAlgorithm, IHmacAlgorithm)
 	private
+		FHmacMode: Boolean;
 		FAlgorithm: BCRYPT_ALG_HANDLE;
+		FAlgorithmBlockSize: Integer;
+		FAlgorithmDigestSize: Integer;
 		FHashObjectBuffer: TBytes;
 		FHash: BCRYPT_HASH_HANDLE;
+		class function GetBcryptAlgorithmBlockSize(Algorithm: BCRYPT_ALG_HANDLE): Integer;
+		class function GetBcryptAlgorithmDigestSize(Algorithm: BCRYPT_ALG_HANDLE): Integer;
 	protected
 		procedure RequireBCrypt;
 		function GetBlockSize: Integer; //e.g. SHA-1 compresses in blocks of 64 bytes
@@ -468,16 +488,20 @@ type
 
 		procedure Initialize;
 		procedure Burn;
-		procedure HashCore(const Data; DataLen: Integer);
-		function HashFinal: TBytes;
+		procedure HashCore(Hash: BCRYPT_HASH_HANDLE; const Data; DataLen: Integer);
+		function HashFinal(Hash: BCRYPT_HASH_HANDLE): TBytes;
 	public
-		constructor Create(const AlgorithmID: UnicodeString; const Provider: PWideChar);
+		constructor Create(const AlgorithmID: UnicodeString; const Provider: PWideChar; HmacMode: Boolean);
 		destructor Destroy; override;
 
 		class function IsAvailable: Boolean;
 
-		procedure HashData(const Buffer; BufferLen: Integer);
+		{ IHashAlgorithm }
+		procedure HashData(const Buffer; BufferLen: Integer); overload;
 		function Finalize: TBytes;
+
+		{ IHmacAlgoritm }
+		function HashData(const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes; overload;
 	end;
 
 {
@@ -509,6 +533,33 @@ type
 		function Finalize: TBytes;
 	end;
 
+	THmac = class(TInterfacedObject, IHmacAlgorithm)
+	private
+		FHash: IHashAlgorithm;
+	protected
+		function GetDigestSize: Integer;
+	public
+		constructor Create(Hash: IHashAlgorithm);
+		function HashData(const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
+	end;
+
+	TRfc2898DeriveBytes = class(TInterfacedObject, IPBKDF2Algorithm)
+	private
+		FHMAC: IHmacAlgorithm;
+	public
+		constructor Create(HMAC: IHmacAlgorithm);
+		function GetBytes(const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
+	end;
+
+	TBCryptDeriveKeyPBKDF2 = class(TInterfacedObject, IPBKDF2Algorithm)
+	private
+		FAlgorithm: BCRYPT_ALG_HANDLE;
+	public
+		constructor Create(const AlgorithmID: UnicodeString; const Provider: PWideChar);
+
+		function GetBytes(const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
+	end;
+
 { TScrypt }
 
 class function TScrypt.GetBytes(const Passphrase, Salt: UnicodeString; nDesiredBytes: Integer): TBytes;
@@ -517,15 +568,16 @@ var
 	saltUtf8: TBytes;
 	costFactor, blockSizeFactor, parallelizationFactor: Cardinal;
 begin
+	saltUtf8 := TScrypt.StringToBytes(Salt);
+
 	scrypt := TScrypt.Create;
 	try
-		saltUtf8 := scrypt.StringToBytes(Salt);
 		scrypt.GetDefaultParameters(costFactor, blockSizeFactor, parallelizationFactor);
 
 		Result := scrypt.DeriveBytes(Passphrase, saltUtf8, costFactor, blockSizeFactor, parallelizationFactor, nDesiredBytes);
-   finally
+	finally
 		scrypt.Free;
-   end;
+	end;
 end;
 
 procedure TScrypt.GetDefaultParameters(out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal);
@@ -741,7 +793,7 @@ begin
 	for i := 0 to 2*r-1 do
 	begin
 		//T = X xor B[i]
-		XorBlockInPlace(X[0], B[64*i], 64);
+		TScrypt.XorBlockInPlace(X[0], B[64*i], 64);
 
 		//X = Salsa (T)
 		Self.Salsa20InPlace(X[0]);
@@ -948,7 +1000,7 @@ var
 	costFactor, blockSizeFactor, parallelizationFactor: Cardinal;
 	salt, expected, actual: TBytes;
 const
-	SCouldNotParsePassword = 'asdfasdf';
+	SCouldNotParsePassword = 'Could not parse expected password hash';
 begin
 	{
 		Validate the supplied password against the saved hash.
@@ -977,7 +1029,7 @@ begin
 end;
 
 function TScrypt.DeriveBytes(const Passphrase: UnicodeString; const Salt: array of Byte; const CostFactor,
-  BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
+		BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
 var
 	B: TBytes;
 	i: UInt64;
@@ -988,7 +1040,7 @@ begin
 	blockSize := 128*BlockSizeFactor;
 
 	//Step 1. Use PBKDF2 to generate the initial blocks
-	B := Self.PBKDF2(FHash, Passphrase, salt[0], Length(salt), 1, ParallelizationFactor*blockSize);
+	B := Self.PBKDF2(Passphrase, salt[0], Length(salt), 1, ParallelizationFactor*blockSize);
 
 	//Step 2. Run RoMix on each block
 	{
@@ -1013,7 +1065,7 @@ begin
 	end;
 
 	//Step 3. Use PBDKF2 with out password, but use B as the salt
-	Result := Self.PBKDF2(FHash, Passphrase, B[0], ParallelizationFactor*blockSize, 1, DesiredBytes);
+	Result := Self.PBKDF2(Passphrase, B[0], ParallelizationFactor*blockSize, 1, DesiredBytes);
 end;
 
 function TScrypt.FormatPasswordHash(const costFactor, blockSizeFactor, parallelizationFactor: Integer; const Salt,
@@ -1062,8 +1114,160 @@ end;
 constructor TScrypt.Create;
 begin
 	inherited Create;
+end;
 
-	FHash := TScrypt.GetHashAlgorithm('SHA256'); //the best one available
+class function TScrypt.CreateObject(ObjectName: string): IInterface;
+const
+	BCRYPT_SHA1_ALGORITHM = 'SHA1';
+	BCRYPT_SHA256_ALGORITHM = 'SHA256';
+
+	SUnknownAlgorithm = 'Unknown algorithm "%s" requested';
+
+	function IsAlgo(s: string): Boolean;
+	begin
+		Result := AnsiSameText(ObjectName, s);
+	end;
+begin
+	{
+		We contain a number of hash algorithms.
+		It might be nice to let people outside us to get ahold of them.
+
+		HashAlgorithmName can be one of the following strings
+
+		| HashAlgorithmName          | Description                         |
+		|----------------------------|-------------------------------------|
+		| 'SHA1'                     | SHA-1, best implementation          |
+		| 'SHA1.PurePascal'          | SHA-1, pure pascal                  |
+		| 'SHA1.Csp'                 | SHA-1, Crypto API                   |
+		| 'SHA1.Cng'                 | SHA-1, Crypto Next Gen (Cng)        |
+
+		| 'SHA256'                   | SHA256, best implementation         |
+		| 'SHA256.PurePascal         | SHA256, pure pascal                 |
+		| 'SHA256.Csp'               | SHA256, Crypto API                  |
+		| 'SHA256.Cng'               | SHA256, Crypto Next Gen (Cng)       |
+
+		| 'HMAC.SHA1'                | HMAC-SHA1                           |
+		| 'HMAC.SHA1.PurePascal'     | HMAC-SHA1, pure pascal              |
+		| 'HMAC.SHA1.Cng'            | HMAC-SHA1, Crypto Next Gen          |
+
+		| 'HMAC.SHA2561'             | HMAC-SHA256                         |
+		| 'HMAC.SHA256.PurePascal'   | HMAC-SHA256, pure pascal            |
+		| 'HMAC.SHA256.Cng'          | HMAC-SHA256, Crypto Next Gen        |
+
+		| 'PBKDF2.SHA1'              | PBKDF-SHA1, best implementation     |
+		| 'PBKDF2.SHA1.PurePascal'   | PBKDF-SHA1, Pure pascal             |
+		| 'PBKDF2.SHA1.Cng'          | PBKDF-SHA1, Crypto Next Gen (Cng)   |
+
+		| 'PBKDF2.SHA256'            | PBKDF-SHA256, best implementation   |
+		| 'PBKDF2.SHA256.PurePascal' | PBKDF-SHA256, Pure pascal           |
+		| 'PBKDF2.SHA256.Cng'        | PBKDF-SHA256, Crypto Next Gen (Cng) |
+
+	}
+	if IsAlgo('SHA1') then
+	begin
+{$IFDEF MSWINDOWS}
+		//Microsoft SHA1 Cng and CSP versions are about 87% faster than our "PurePascal" versions
+		if TCngHash.IsAvailable then
+			ObjectName := 'SHA1.Cng'
+		else
+			ObjectName := 'SHA1.Csp';
+{$ELSE}
+		ObjectName := 'SHA1.PurePascal';
+{$ENDIF}
+		Result := TScrypt.CreateObject(ObjectName);
+		Exit;
+   end;
+
+	if IsAlgo('SHA256') then
+	begin
+{$IFDEF MSWINDOWS}
+		//Microsoft SHA256 Cng and CSP versions are about 87% faster than our "PurePascal" versions
+		if TCngHash.IsAvailable then
+			ObjectName := 'SHA256.Cng'
+		else
+			ObjectName := 'SHA256.Csp';
+{$ELSE}
+		ObjectName := 'SHA256.PurePascal';
+{$ENDIF}
+		Result := TScrypt.CreateObject(ObjectName);
+		Exit;
+	end;
+
+	if IsAlgo('HMAC.SHA1') then
+	begin
+{$IFDEF MSWINDOWS}
+		//Microsoft Cng provides a full HMAC implementation using SHA-1
+		if TCngHash.IsAvailable then
+			ObjectName := 'HMAC.SHA1.Cng'
+		else
+			ObjectName := 'HMAC.SHA1.PurePascal';
+{$ELSE}
+		ObjectName := 'HMAC.SHA1.PurePascal';
+{$ENDIF}
+		Result := TScrypt.CreateObject(ObjectName);
+		Exit;
+	end;
+
+	if IsAlgo('HMAC.SHA256') then
+	begin
+{$IFDEF MSWINDOWS}
+		//Microsoft Cng provides a full HMAC implementation using SHA256
+		if TCngHash.IsAvailable then
+			ObjectName := 'HMAC.SHA256.Cng'
+		else
+			ObjectName := 'HMAC.SHA256.PurePascal';
+{$ELSE}
+		ObjectName := 'HMAC.SHA256.PurePascal';
+{$ENDIF}
+		Result := TScrypt.CreateObject(ObjectName);
+		Exit;
+	end;
+
+
+	{ SHA1 }
+	if      IsAlgo('SHA1.PurePascal')        then Result := TSHA1.Create
+	else if IsAlgo('SHA1.Csp')               then Result := TCspHash.Create(CALG_SHA1, 64)
+	else if IsAlgo('SHA1.Cng')               then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil, False)
+
+	{ SHA256 }
+	else if IsAlgo('SHA256.PurePascal')      then Result := TSHA256.Create
+	else if IsAlgo('SHA256.Csp')             then Result := TCspHash.Create(CALG_SHA_256, 64)
+	else if IsAlgo('SHA256.Cng')             then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil, False)
+
+	{ HMAC - SHA1 }
+	else if IsAlgo('HMAC.SHA1.PurePascal')   then Result := THmac.Create(TSHA1.Create)
+	else if IsAlgo('HMAC.SHA1.csp')          then Result := THmac.Create(TCspHash.Create(CALG_SHA1, 64))
+	else if IsAlgo('HMAC.SHA1.Cng')          then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil, True)
+
+	{ HMAC - SHA256 }
+	else if IsAlgo('HMAC.SHA256.PurePascal') then Result := THmac.Create(TSHA256.Create)
+	else if IsAlgo('HMAC.SHA256.csp')        then Result := THmac.Create(TCspHash.Create(CALG_SHA_256, 64))
+	else if IsAlgo('HMAC.SHA256.Cng')        then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil, True)
+
+	{ PBKDF2 - SHA1 }
+	else if IsAlgo('PBKDF2.SHA1') then
+	begin
+		if TCngHash.IsAvailable then
+			Result := TScrypt.CreateObject('PBKDF2.SHA1.Cng')
+		else
+			Result := TScrypt.CreateObject('PBKDF2.SHA1.PurePascal');
+	end
+	else if IsAlgo('PBKDF2.SHA1.PurePascal') then Result := TRfc2898DeriveBytes.Create(THmac.Create(TSHA1.Create))
+	else if IsAlgo('PBKDF2.SHA1.Cng')        then Result := TBCryptDeriveKeyPBKDF2.Create(BCRYPT_SHA1_ALGORITHM, nil)
+
+	{ PBKDF2 - SHA256 }
+	else if IsAlgo('PBKDF2.SHA256') then
+	begin
+		if TCngHash.IsAvailable then
+			Result := TScrypt.CreateObject('PBKDF2.SHA256.Cng')
+		else
+			Result := TScrypt.CreateObject('PBKDF2.SHA256.PurePascal');
+	end
+	else if IsAlgo('PBKDF2.SHA256.PurePascal') then Result := TRfc2898DeriveBytes.Create(THmac.Create(TSHA256.Create))
+	else if IsAlgo('PBKDF2.SHA256.Cng')        then Result := TBCryptDeriveKeyPBKDF2.Create(BCRYPT_SHA256_ALGORITHM, nil)
+
+	else
+		raise Exception.CreateFmt(SUnknownAlgorithm, [ObjectName]);
 end;
 
 function TScrypt.GenerateSalt: TBytes;
@@ -1090,81 +1294,20 @@ var
 	saltUtf8: TBytes;
 	scrypt: TScrypt;
 begin
+	{
+		BlockSize = BlockSizeFactor*128 bytes
+		Iterations = 2^CostFactor
+
+		Memory requirement: BlockSize * Iterations = 128*BlockSizeFactor*(2^CostFactor)
+	}
+	saltUtf8 := TScrypt.StringToBytes(Salt);
+
 	scrypt := TScrypt.Create;
 	try
-		saltUtf8 := scrypt.StringToBytes(Salt);
-
 		Result := scrypt.DeriveBytes(Passphrase, saltUtf8, CostFactor, BlockSizeFactor, ParallelizationFactor, DesiredBytes);
-   finally
+	finally
 		scrypt.Free;
-   end;
-end;
-
-class function TScrypt.GetHashAlgorithm(HashAlgorithmName: string): IHashAlgorithm;
-const
-	BCRYPT_SHA1_ALGORITHM = 'SHA1';
-	BCRYPT_SHA256_ALGORITHM = 'SHA256';
-
-	SUnknownAlgorithm = 'Unknown hash algorithm "%s" requested';
-
-	function IsAlgo(s: string): Boolean;
-	begin
-		Result := AnsiSameText(HashAlgorithmName, s);
-   end;
-begin
-	{
-		We contain a number of hash algorithms.
-		It might be nice to let people outside us to get ahold of them.
-
-		| HashAlgorithmName | Class         | Description                   |
-		|-------------------|---------------|-------------------------------|
-		| 'SHA1'            |               | SHA-1, best implementation    |
-		| 'SHA1PurePascal'  | TSHA1         | SHA-1, pure pascal            |
-		| 'SHA1csp'         | TCspHash      | SHA-1, Crypto API             |
-		| 'SHA1Cng'         | TSHA1csp      | SHA-1, Crypto Next Gen (Cng)  |
-		| 'SHA256'          |               | SHA256, best implementation   |
-		| 'SHA256PurePascal | TSHA256       | SHA256, pure pascal           |
-		| 'SHA256csp'       | TCspHash      | SHA256, Crypto API            |
-		| 'SHA256Cng'       | TCngHash      | SHA256, Crypto Next Gen (Cng) |
-	}
-	if AnsiSameText(HashAlgorithmName, 'SHA1') then
-	begin
-{$IFDEF MSWINDOWS}
-		//Microsoft SHA1 Cng and CSP versions are about 87% faster than our "PurePascal" versions
-		if TCngHash.IsAvailable then
-			HashAlgorithmName := 'SHA1Cng'
-		else
-			HashAlgorithmName := 'SHA1csp';
-{$ELSE}
-		HashAlgorithmName := 'SHA1PurePascal';
-{$ENDIF}
-		Result := TScrypt.GetHashAlgorithm(HashAlgorithmName);
-		Exit;
-   end;
-
-	if AnsiSameText(HashAlgorithmName, 'SHA256') then
-	begin
-{$IFDEF MSWINDOWS}
-		//Microsoft SHA256 Cng and CSP versions are about 87% faster than our "PurePascal" versions
-		if TCngHash.IsAvailable then
-			HashAlgorithmName := 'SHA256Cng'
-		else
-			HashAlgorithmName := 'SHA256csp';
-{$ELSE}
-		HashAlgorithmName := 'SHA256PurePascal';
-{$ENDIF}
-		Result := TScrypt.GetHashAlgorithm(HashAlgorithmName);
-		Exit;
 	end;
-
-	if      IsAlgo('SHA1PurePascal')   then Result := TSHA1.Create
-	else if IsAlgo('SHA1csp')          then Result := TCspHash.Create(CALG_SHA1, 64)
-	else if IsAlgo('SHA1Cng')          then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil)
-	else if IsAlgo('SHA256PurePascal') then Result := TSHA256.Create
-	else if IsAlgo('SHA256csp')        then Result := TCspHash.Create(CALG_SHA_256, 64)
-	else if IsAlgo('SHA256Cng')        then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil)
-	else
-		raise Exception.CreateFmt(SUnknownAlgorithm, [HashAlgorithmName]);
 end;
 
 class function TScrypt.HashPassword(const Passphrase: UnicodeString): string;
@@ -1176,7 +1319,26 @@ var
 	salt, derivedBytes: TBytes;
 begin
 	{
-   	Generate a password hash, setting TScrypt decide the best parameters
+		Generate a password hash, letting TScrypt decide the best parameters.
+
+		Password hash is returned as a string of the form:
+
+			$s1$NNrrpp$salt$hash
+				NN   - hex encoded N log2 (two hex digits)
+				rr   - hex encoded r in 1-255
+				pp   - hex encoded p in 1-255
+				salt - base64 encoded salt 1-16 bytes decoded
+				hash - base64 encoded 64-byte scrypt hash
+
+		For example.
+			Password: "correct horse battery staple"
+			Hash: "$s1$0E0801$G34Rvmk2DSkp9sFJyyM49O$z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e"
+
+					CostFactor: 0x0E (14), Cost=2^14 = 16384
+					BlockSizeFacdtor: 0x08, BlockSize = 128 * 8 = 1,024 bytes
+					Parallelization Factor: 0x1
+					Salt (base64): G34Rvmk2DSkp9sFJyyM49O
+					Password (base64): z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e
 	}
 	scrypt := TScrypt.Create;
 	try
@@ -1202,6 +1364,25 @@ begin
 			CostFactor:            log2(N), N = 2^costFactor
 			BlockSizeFactor:       r
 			ParallelizationFactor: p
+
+		Password hash is returned as a string of the form:
+
+			$s1$NNrrpp$salt$hash
+				NN   - hex encoded N log2 (two hex digits)
+				rr   - hex encoded r in 1-255
+				pp   - hex encoded p in 1-255
+				salt - base64 encoded salt 1-16 bytes decoded
+				hash - base64 encoded 64-byte scrypt hash
+
+		For example.
+			Password: "correct horse battery staple"
+			Hash: "$s1$0E0801$G34Rvmk2DSkp9sFJyyM49O$z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e"
+
+					CostFactor: 0x0E (14), Cost=2^14 = 16384
+					BlockSizeFacdtor: 0x08, BlockSize = 128 * 8 = 1,024 bytes
+					Parallelization Factor: 0x1
+					Salt (base64): G34Rvmk2DSkp9sFJyyM49O
+					Password (base64): z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e
 	}
 	scrypt := TScrypt.Create;
 	try
@@ -1215,7 +1396,7 @@ begin
 	end;
 end;
 
-function TScrypt.HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
+(*function TScrypt.HMAC(const Hash: IHashAlgorithm; const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
 var
 	oKeyPad, iKeyPad: TBytes;
 	i, n: Integer;
@@ -1239,23 +1420,23 @@ begin
 	SetLength(iKeyPad, blockSize); //elements will be initialized to zero by SetLength
 
 	// if key is longer than blocksize: reset it to key=Hash(key)
-   if KeyLen > blockSize then
-   begin
+	if KeyLen > blockSize then
+	begin
 		Hash.HashData(Key, KeyLen);
 		digest := Hash.Finalize;
 
-      //Store hashed key in pads
+		//Store hashed key in pads
 		Move(digest[0], iKeyPad[0], Length(digest)); //remaining bytes will remain zero
 		Move(digest[0], oKeyPad[0], Length(digest)); //remaining bytes will remain zero
-   end
-   else
-   begin
+	end
+	else
+	begin
 		//Store original key in pads
-      Move(Key, iKeyPad[0], KeyLen); //remaining bytes will remain zero
-      Move(Key, oKeyPad[0], KeyLen); //remaining bytes will remain zero
-   end;
+		Move(Key, iKeyPad[0], KeyLen); //remaining bytes will remain zero
+		Move(Key, oKeyPad[0], KeyLen); //remaining bytes will remain zero
+	end;
 
-   {
+	{
 		Xor key with ipad and ipod constants
 			iKeyPad = key xor 0x36
 			oKeyPad = key xor 0x5c
@@ -1282,111 +1463,25 @@ begin
 	{
 		Result := hash(oKeyPad || hash(iKeyPad || message))
 	}
-   // Perform inner hash: digest = Hash(iKeyPad || data)
+	// Perform inner hash: digest = Hash(iKeyPad || data)
 	SetLength(iKeyPad, blockSize+DataLen);
 	Move(data, iKeyPad[blockSize], DataLen);
 	Hash.HashData(iKeyPad[0], Length(iKeyPad));
 	digest := Hash.Finalize;
 
-   // perform outer hash: result = Hash(oKeyPad || digest)
+	// perform outer hash: result = Hash(oKeyPad || digest)
 	SetLength(oKeyPad, blockSize+Length(digest));
 	Move(digest[0], oKeyPad[blockSize], Length(digest));
 	Hash.HashData(oKeyPad[0], Length(oKeyPad));
 	Result := Hash.Finalize;
-end;
+end;*)
 
-function TScrypt.PBKDF2(const Hash: IHashAlgorithm; const Password: UnicodeString; const Salt; const SaltLength: Integer;
-		IterationCount, DesiredBytes: Integer): TBytes;
+function TScrypt.PBKDF2(const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
 var
-	Ti: TBytes;
-	V: TBytes;
-	U: TBytes;
-	hLen: Integer; //HMAC size in bytes
-	cbSalt: Integer;
-	l, r, i, j: Integer;
-	dwULen: DWORD;
-	derivedKey: TBytes;
-	utf8Password: TBytes;
+	rfc: IPBKDF2Algorithm;
 begin
-	{
-		Password-Based Key Derivation Function 2
-
-		Implementation of RFC2898
-				PKCS #5: Password-Based Cryptography Specification Version 2.0
-				http://tools.ietf.org/html/rfc2898
-
-		Given an arbitrary "password" string, and optionally some salt, PasswordKeyDeriveBytes
-		can generate n bytes, suitable for use as a cryptographic key.
-
-		e.g. AES commonly uses 128-bit (16 byte) or 256-bit (32 byte) keys.
-
-		Tested with test vectors from RFC6070
-				PKCS #5: Password-Based Key Derivation Function 2 (PBKDF2)  Test Vectors
-				http://tools.ietf.org/html/rfc6070
-	}
-//	if DerivedKeyLength > 2^32*hLen then
-//		raise Exception.Create('Derived key too long');
-
-	if hash = nil then
-		raise EScryptException.Create('No hash algorithm supplied');
-
-	hLen := Hash.DigestSize;
-
-	l := Ceil(DesiredBytes / hLen);
-	r := DesiredBytes - (l-1)*hLen;
-
-	cbSalt := SaltLength;
-
-	SetLength(Ti, hLen);
-	SetLength(V,  hLen);
-	SetLength(U,  Max(cbSalt+4, hLen));
-
-	SetLength(derivedKey, DesiredBytes);
-
-	utf8Password := Self.StringToBytes(Password);
-
-	for i := 1 to l do
-	begin
-		ZeroMemory(@Ti[0], hLen);
-		for j := 1 to IterationCount do
-		begin
-			if j = 1 then
-			begin
-				//It's the first iteration, construct the input for the hmac function
-				if cbSalt > 0 then
-					Move(Salt, u[0], cbSalt);
-				U[cbSalt]    := Byte((i and $FF000000) shr 24);
-				U[cbSalt+ 1] := Byte((i and $00FF0000) shr 16);
-				U[cbSalt+ 2] := Byte((i and $0000FF00) shr  8);
-				U[cbSalt+ 3] := Byte((i and $000000FF)       );
-				dwULen := cbSalt + 4;
-			end
-			else
-			begin
-				Move(V[0], U[0], hLen); //memcpy(U, V, hlen);
-				dwULen := hLen;
-			end;
-
-			//Run Password and U through HMAC to get digest V
-			V := Self.HMAC(Hash, utf8Password[0], Length(utf8Password), U[0], dwULen);
-
-			//Ti := Ti xor V
-
-			Self.XorBlockInPlace({var}Ti[0], V[0], hlen);
-		end;
-
-		if (i <> l) then
-		begin
-			Move(Ti[0], derivedKey[(i-1)*hLen], hLen); //memcpy(derivedKey[(i-1) * hlen], Ti, hlen);
-		end
-		else
-		begin
-			// Take only the first r bytes
-			Move(Ti[0], derivedKey[(i-1)*hLen], r); //memcpy(derivedKey[(i-1) * hlen], Ti, r);
-		end;
-	end;
-
-	Result := derivedKey;
+	rfc := Self.CreateObject('PBKDF2.SHA256') as IPBKDF2Algorithm;
+	Result := rfc.GetBytes(Password, Salt, SaltLength, IterationCount, DesiredBytes);
 end;
 
 function TScrypt.ROMix(const B; BlockSize, CostFactor: Cardinal): TBytes;
@@ -1480,7 +1575,7 @@ begin
 		//T ← X xor V[j]
 		//X ← BlockMix(T)
 		Move(V[BlockSize*j], T[0], BlockSize);
-		XorBlockInPlace(T[0], X[0], BlockSize);
+		TScrypt.XorBlockInPlace(T[0], X[0], BlockSize);
 		X := Self.BlockMix(T);
 	end;
 
@@ -1845,7 +1940,7 @@ begin
    end;
 end;
 
-procedure TScrypt.XorBlockInPlace(var A; const B; Length: Integer);
+class procedure TScrypt.XorBlockInPlace(var A; const B; Length: Integer);
 var
 	i: Integer;
 	blocks: Integer;
@@ -2690,25 +2785,36 @@ begin
 	end;
 end;
 
-constructor TCngHash.Create(const AlgorithmID: UnicodeString; const Provider: PWideChar);
+constructor TCngHash.Create(const AlgorithmID: UnicodeString; const Provider: PWideChar; HmacMode: Boolean);
 var
 	nts: NTSTATUS;
 	algorithm: BCRYPT_ALG_HANDLE;
 	objectLength: DWORD;
 	bytesReceived: Cardinal;
+	dwFlags: Cardinal;
 begin
 	inherited Create;
 
 	Self.RequireBCrypt;
 
+	FHmacMode := HmacMode;
+	if HmacMode then
+		dwFlags := BCRYPT_ALG_HANDLE_HMAC_FLAG
+	else
+		dwFlags := 0;
+
 	nts := _BCryptOpenAlgorithmProvider({out}algorithm,
 			PWideChar(AlgorithmID), //Algorithm: e.g. BCRYPT_SHA1_ALGORITHM ("SHA1")
 			Provider, //Provider. nil ==> default
-			0 //dwFlags
+			dwFlags
 			);
 	NTStatusCheck(nts);
 
 	FAlgorithm := algorithm;
+
+	//Get Algorithm block size
+	FAlgorithmBlockSize := TCngHash.GetBcryptAlgorithmBlockSize(FAlgorithm);
+	FAlgorithmDigestSize := TCngHash.GetBcryptAlgorithmDigestSize(FAlgorithm);
 
 	//Get the length of the hash data object, so we can provide the required buffer
 	nts := _BCryptGetProperty(algorithm,
@@ -2716,8 +2822,6 @@ begin
 	NTStatusCheck(nts);
 
 	SetLength(FHashObjectBuffer, objectLength);
-
-	Self.Initialize;
 end;
 
 destructor TCngHash.Destroy;
@@ -2735,11 +2839,25 @@ end;
 
 function TCngHash.Finalize: TBytes;
 begin
-	Result := Self.HashFinal;
-	Self.Initialize; //Get ready for another round of hashing
+	if FHmacMode then
+		raise EScryptException.Create('Cng hash object is in HMAC mode');
+
+	Result := Self.HashFinal(FHash);
+
+	Self.Burn;
 end;
 
 function TCngHash.GetBlockSize: Integer;
+begin
+	Result := FAlgorithmBlockSize;
+end;
+
+function TCngHash.GetDigestSize: Integer;
+begin
+	Result := FAlgorithmDigestSize;
+end;
+
+class function TCngHash.GetBcryptAlgorithmBlockSize(Algorithm: BCRYPT_HASH_HANDLE): Integer;
 const
 	BCRYPT_HASH_BLOCK_LENGTH = 'HashBlockLength';
 var
@@ -2748,13 +2866,13 @@ var
 	nts: NTSTATUS;
 begin
 	//Get the hash block size
-	nts := _BCryptGetProperty(FAlgorithm, PWideChar(BCRYPT_HASH_BLOCK_LENGTH), @blockSize, SizeOf(blockSize), {out}bytesReceived, 0);
+	nts := _BCryptGetProperty(Algorithm, PWideChar(BCRYPT_HASH_BLOCK_LENGTH), @blockSize, SizeOf(blockSize), {out}bytesReceived, 0);
 	NTStatusCheck(nts);
 
 	Result := Integer(blockSize);
 end;
 
-function TCngHash.GetDigestSize: Integer;
+class function TCngHash.GetBcryptAlgorithmDigestSize(Algorithm: BCRYPT_ALG_HANDLE): Integer;
 const
 	BCRYPT_HASH_LENGTH = 'HashDigestLength';
 var
@@ -2763,26 +2881,49 @@ var
 	nts: NTSTATUS;
 begin
 	//Get the length of the hash digest
-	nts := _BCryptGetProperty(FAlgorithm, PWideChar(BCRYPT_HASH_LENGTH), @digestSize, SizeOf(digestSize), {out}bytesReceived, 0);
+	nts := _BCryptGetProperty(Algorithm, PWideChar(BCRYPT_HASH_LENGTH), @digestSize, SizeOf(digestSize), {out}bytesReceived, 0);
 	NTStatusCheck(nts);
 
 	Result := Integer(digestSize);
 end;
 
-procedure TCngHash.HashCore(const Data; DataLen: Integer);
+procedure TCngHash.HashCore(Hash: BCRYPT_HASH_HANDLE; const Data; DataLen: Integer);
 var
 	hr: NTSTATUS;
 begin
-	hr := _BCryptHashData(FHash, Pointer(@Data), DataLen, 0);
+	hr := _BCryptHashData(Hash, Pointer(@Data), DataLen, 0);
 	NTStatusCheck(hr);
+end;
+
+function TCngHash.HashData(const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
+var
+	hash: BCRYPT_HASH_HANDLE;
+	hr: NTSTATUS;
+begin
+	ZeroMemory(@FHashObjectBuffer[0], Length(FHashObjectBuffer));
+
+	hr := _BCryptCreateHash(FAlgorithm, {out}hash, @FHashObjectBuffer[0], Length(FHashObjectBuffer), Pointer(@Key), KeyLen, 0);
+	NTStatusCheck(hr);
+	try
+		Self.HashCore(hash, Data, DataLen);
+
+		Result := Self.HashFinal(hash);
+	finally
+		_BCryptDestroyHash(hash);
+		ZeroMemory(@FHashObjectBuffer[0], Length(FHashObjectBuffer));
+	end;
 end;
 
 procedure TCngHash.HashData(const Buffer; BufferLen: Integer);
 begin
-	Self.HashCore(Buffer, BufferLen);
+	if FHmacMode then
+		raise EScryptException.Create('Cng hash object is in HMAC mode');
+
+	Self.Initialize;
+	Self.HashCore(FHash, Buffer, BufferLen);
 end;
 
-function TCngHash.HashFinal: TBytes;
+function TCngHash.HashFinal(Hash: BCRYPT_HASH_HANDLE): TBytes;
 var
 	digestSize: DWORD;
 	hr: NTSTATUS;
@@ -2790,7 +2931,7 @@ begin
 	digestSize := Self.GetDigestSize;
 	SetLength(Result, digestSize);
 
-	hr :=_BCryptFinishHash(FHash, @Result[0], digestSize, 0);
+	hr :=_BCryptFinishHash(Hash, @Result[0], digestSize, 0);
 	NTStatusCheck(hr);
 end;
 
@@ -2799,18 +2940,18 @@ var
 	hash: BCRYPT_HASH_HANDLE;
 	hr: NTSTATUS;
 begin
-	Self.Burn;
+	if FHash = 0 then
+	begin
+		hr := _BCryptCreateHash(FAlgorithm, {out}hash, @FHashObjectBuffer[0], Length(FHashObjectBuffer), nil, 0, 0);
+		NTStatusCheck(hr);
 
-	hr := _BCryptCreateHash(FAlgorithm, {out}hash, @FHashObjectBuffer[0], Length(FHashObjectBuffer), nil, 0, 0);
-	NTStatusCheck(hr);
-
-	FHash := hash;
+		FHash := hash;
+	end;
 end;
 
 class function TCngHash.InitializeBCrypt: Boolean;
 var
 	moduleHandle: HMODULE;
-	p: Pointer;
 	available: Boolean;
 
 	function GetProcedureAddress(procedureName: UnicodeString; var FunctionFound: Boolean): Pointer;
@@ -2837,6 +2978,7 @@ begin
 			_BCryptFinishHash := GetProcedureAddress('BCryptFinishHash', available);
 			_BCryptDestroyHash := GetProcedureAddress('BCryptDestroyHash', available);
 			_BCryptGetProperty := GetProcedureAddress('BCryptGetProperty', available);
+			_BCryptDeriveKeyPBKDF2 := GetProcedureAddress('BCryptDeriveKeyPBKDF2', available);
 
 			_BCryptAvailable := available;
 		end;
@@ -2855,6 +2997,236 @@ procedure TCngHash.RequireBCrypt;
 begin
 	if not TCngHash.InitializeBCrypt then
 		raise Exception.Create('BCrypt not available. Requires Windows Vista or greater');
+end;
+
+{ THmac }
+
+constructor THmac.Create(Hash: IHashAlgorithm);
+begin
+	inherited Create;
+
+	FHash := Hash;
+end;
+
+function THmac.GetDigestSize: Integer;
+begin
+	Result := FHash.DigestSize;
+end;
+
+function THmac.HashData(const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
+var
+	oKeyPad, iKeyPad: TBytes;
+	i, n: Integer;
+	digest: TBytes;
+	blockSize: Integer;
+
+type
+	PUInt64Array = ^TUInt64Array_Unsafe;
+	TUInt64Array_Unsafe = array[0..MaxInt div 16] of UInt64;
+
+begin
+	{
+		Implementation of RFC2104  HMAC: Keyed-Hashing for Message Authentication
+
+		Tested with known test vectors from RFC2202: Test Cases for HMAC-MD5 and HMAC-SHA-1
+	}
+	blockSize := FHash.BlockSize;
+
+	// Clear pads
+	SetLength(oKeyPad, blockSize); //elements will be initialized to zero by SetLength
+	SetLength(iKeyPad, blockSize); //elements will be initialized to zero by SetLength
+
+	// if key is longer than blocksize: reset it to key=Hash(key)
+	if KeyLen > blockSize then
+	begin
+		FHash.HashData(Key, KeyLen);
+		digest := FHash.Finalize;
+
+		//Store hashed key in pads
+		Move(digest[0], iKeyPad[0], Length(digest)); //remaining bytes will remain zero
+		Move(digest[0], oKeyPad[0], Length(digest)); //remaining bytes will remain zero
+	end
+	else
+	begin
+		//Store original key in pads
+		Move(Key, iKeyPad[0], KeyLen); //remaining bytes will remain zero
+		Move(Key, oKeyPad[0], KeyLen); //remaining bytes will remain zero
+	end;
+
+	{
+		Xor key with ipad and ipod constants
+			iKeyPad = key xor 0x36
+			oKeyPad = key xor 0x5c
+
+		DONE: Unroll this to blockSize div 4 xor's of $5c5c5c5c and $36363636
+	}
+	n := blockSize div SizeOf(UInt64);
+	for i := 0 to n-1 do
+		PUInt64Array(@oKeyPad[0])[i] := PUInt64Array(@oKeyPad[0])[i] xor UInt64($5c5c5c5c5c5c5c5c);
+	for i := 0 to n-1 do
+		PUInt64Array(@iKeyPad[0])[i] := PUInt64Array(@iKeyPad[0])[i] xor UInt64($3636363636363636);
+	n := blockSize mod SizeOf(UInt64);
+	if n <> 0 then
+	begin
+		//This should never happen in practice.
+		//Hash block sizes are going to be multiple of 8 bytes
+		for i := blockSize-1-n to blockSize-1 do
+		begin
+			oKeyPad[i] := oKeyPad[i] xor $5c;
+			iKeyPad[i] := iKeyPad[i] xor $36;
+		end;
+	end;
+
+	{
+		Result := hash(oKeyPad || hash(iKeyPad || message))
+	}
+	// Perform inner hash: digest = Hash(iKeyPad || data)
+	SetLength(iKeyPad, blockSize+DataLen);
+	Move(data, iKeyPad[blockSize], DataLen);
+	FHash.HashData(iKeyPad[0], Length(iKeyPad));
+	digest := FHash.Finalize;
+
+	// perform outer hash: result = Hash(oKeyPad || digest)
+	SetLength(oKeyPad, blockSize+Length(digest));
+	Move(digest[0], oKeyPad[blockSize], Length(digest));
+	FHash.HashData(oKeyPad[0], Length(oKeyPad));
+	Result := FHash.Finalize;
+end;
+
+{ TRfc2898DeriveBytes }
+
+constructor TRfc2898DeriveBytes.Create(HMAC: IHmacAlgorithm);
+begin
+	inherited Create;
+
+	FHMAC := HMAC;
+end;
+
+function TRfc2898DeriveBytes.GetBytes(const Password: UnicodeString; const Salt; const SaltLength: Integer;
+  IterationCount, DesiredBytes: Integer): TBytes;
+var
+	Ti: TBytes;
+	V: TBytes;
+	U: TBytes;
+	hLen: Integer; //HMAC size in bytes
+	cbSalt: Integer;
+	l, r, i, j: Integer;
+	dwULen: DWORD;
+	derivedKey: TBytes;
+	utf8Password: TBytes;
+begin
+	{
+		Password-Based Key Derivation Function 2
+
+		Implementation of RFC2898
+				PKCS #5: Password-Based Cryptography Specification Version 2.0
+				http://tools.ietf.org/html/rfc2898
+
+		Given an arbitrary "password" string, and optionally some salt, PasswordKeyDeriveBytes
+		can generate n bytes, suitable for use as a cryptographic key.
+
+		e.g. AES commonly uses 128-bit (16 byte) or 256-bit (32 byte) keys.
+
+		Tested with test vectors from RFC6070
+				PKCS #5: Password-Based Key Derivation Function 2 (PBKDF2)  Test Vectors
+				http://tools.ietf.org/html/rfc6070
+	}
+//	if DerivedKeyLength > 2^32*hLen then
+//		raise Exception.Create('Derived key too long');
+
+	if FHMAC = nil then
+		raise EScryptException.Create('No HMAC algorithm supplied');
+
+	hLen := FHMAC.DigestSize;
+
+	l := Ceil(DesiredBytes / hLen);
+	r := DesiredBytes - (l-1)*hLen;
+
+	cbSalt := SaltLength;
+
+	SetLength(Ti, hLen);
+	SetLength(V,  hLen);
+	SetLength(U,  Max(cbSalt+4, hLen));
+
+	SetLength(derivedKey, DesiredBytes);
+
+	utf8Password := TScrypt.StringToBytes(Password);
+
+	for i := 1 to l do
+	begin
+		ZeroMemory(@Ti[0], hLen);
+		for j := 1 to IterationCount do
+		begin
+			if j = 1 then
+			begin
+				//It's the first iteration, construct the input for the hmac function
+				if cbSalt > 0 then
+					Move(Salt, u[0], cbSalt);
+				U[cbSalt]    := Byte((i and $FF000000) shr 24);
+				U[cbSalt+ 1] := Byte((i and $00FF0000) shr 16);
+				U[cbSalt+ 2] := Byte((i and $0000FF00) shr  8);
+				U[cbSalt+ 3] := Byte((i and $000000FF)       );
+				dwULen := cbSalt + 4;
+			end
+			else
+			begin
+				Move(V[0], U[0], hLen); //memcpy(U, V, hlen);
+				dwULen := hLen;
+			end;
+
+			//Run Password and U through HMAC to get digest V
+			V := FHMAC.HashData(utf8Password[0], Length(utf8Password), U[0], dwULen);
+
+			//Ti ← Ti xor V
+			TScrypt.XorBlockInPlace({var}Ti[0], V[0], hlen);
+		end;
+
+		if (i <> l) then
+		begin
+			Move(Ti[0], derivedKey[(i-1)*hLen], hLen); //memcpy(derivedKey[(i-1) * hlen], Ti, hlen);
+		end
+		else
+		begin
+			// Take only the first r bytes
+			Move(Ti[0], derivedKey[(i-1)*hLen], r); //memcpy(derivedKey[(i-1) * hlen], Ti, r);
+		end;
+	end;
+
+	Result := derivedKey;
+end;
+
+{ TBCryptDeriveKeyPBKDF2 }
+
+constructor TBCryptDeriveKeyPBKDF2.Create(const AlgorithmID: UnicodeString; const Provider: PWideChar);
+var
+	hr: NTSTATUS;
+	alg: BCRYPT_ALG_HANDLE;
+begin
+	inherited Create;
+
+	hr := _BCryptOpenAlgorithmProvider({out}alg, PWideChar(AlgorithmID), Provider, BCRYPT_ALG_HANDLE_HMAC_FLAG);
+	NTStatusCheck(hr);
+
+	FAlgorithm := alg;
+end;
+
+function TBCryptDeriveKeyPBKDF2.GetBytes(const Password: UnicodeString; const Salt; const SaltLength: Integer;
+		IterationCount, DesiredBytes: Integer): TBytes;
+var
+	utf8Password: TBytes;
+	hr: NTSTATUS;
+begin
+	utf8Password := TScrypt.StringToBytes(Password);
+
+	SetLength(Result, DesiredBytes);
+
+	hr := _BCryptDeriveKeyPBKDF2(FAlgorithm,
+			@utf8Password[0], Length(utf8Password),
+			@Salt, SaltLength,
+			IterationCount,
+			@Result[0], Length(Result),
+			0);
+	NTStatusCheck(hr);
 end;
 
 end.

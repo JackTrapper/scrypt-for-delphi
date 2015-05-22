@@ -7,8 +7,6 @@ uses
 
 type
 	TScryptTests = class(TTestCase)
-	private
-		procedure Test_Scrypt_PasswordFormatting;
 	protected
 		FScrypt: TScrypt;
 		FFreq: Int64;
@@ -16,36 +14,60 @@ type
 		procedure TearDown; override;
 
 		function GetTimestamp: Int64;
+
+		procedure Tester_HMAC_SHA1(HMACsha1: IHmacAlgorithm);
+		procedure Tester_HMAC_SHA256(HMACsha256: IHmacAlgorithm);
+		procedure Tester_PBKDF2_SHA1(Pbkdf: IPBKDF2Algorithm);
+		procedure Tester_PBKDF2_SHA256(Pbkdf2sha256: IPBKDF2Algorithm);
+
+		procedure Test_Scrypt_PasswordFormatting; //todo
 	public
-		procedure ScryptBenchmarks;
 	published
 		//Even though we don't use SHA-1, we implemented it because PBKDF2_SHA1 is the only one with published test vectors
-		procedure SelfTest_SHA1_PurePascal;
-		procedure Test_SHA1_PurePascal_Benchmark;
-		procedure SelfTest_SHA1csp;
-		procedure SelfTest_SHA1Cng;
-
-		procedure SelfTest_HMAC_SHA1;
-		procedure Test_PBKDF2_SHA1;
-		procedure Test_PBKDF2_SHA1_Benchmark;
+		procedure Test_SHA1;
+		procedure Test_SHA1_PurePascal;
+		procedure Benchmark_SHA1_PurePascal; //because native code should be fast
+		procedure Test_SHA1_Csp;
+		procedure Test_SHA1_Cng;
 
 		//Scrypt uses PBKDF2_SHA256
-		procedure SelfTest_SHA256_PurePascal;
-		procedure Test_SHA256_PurePascal_Benchmark;
-		procedure SelfTest_SHA256csp;
-		procedure SelfTest_SHA256cng;
-		procedure SelfTest_HMAC_SHA256;
-		procedure SelfTest_PBKDF2_SHA256;
+		procedure Test_SHA256;
+		procedure Test_SHA256_PurePascal;
+		procedure Benchmark_SHA256_PurePascal;
+		procedure Test_SHA256_Csp;
+		procedure Test_SHA256_Cng;
 
 		procedure BenchmarkHashes;
+
+		procedure Test_HMAC_SHA1;
+		procedure Test_HMAC_SHA1_PurePascal;
+		procedure Test_HMAC_SHA1_Cng;
+
+		procedure Test_HMAC_SHA256;
+		procedure Test_HMAC_SHA256_PurePascal;
+		procedure Test_HMAC_SHA256_Cng;
+
+		procedure Benchmark_HMACs;
+
+		procedure Test_PBKDF2_SHA1;
+		procedure Test_PBKDF2_SHA1_PurePascal;
+		procedure Test_PBKDF2_SHA1_Cng;
+
+		procedure Test_PBKDF2_SHA256;
+		procedure Test_PBKDF2_SHA256_PurePascal;
+		procedure Test_PBKDF2_SHA256_Cng;
+
+		procedure Benchmark_PBKDF2s;
 
 		procedure Test_Salsa208Core;
 		procedure Test_BlockMix;
 		procedure Test_ROMix;
-		procedure SelfTest_Scrypt;
+		procedure Test_Scrypt;
 		procedure Test_PasswordHashing;
 
 		procedure Test_PasswordHashPerformance;
+
+		procedure ScryptBenchmarks;
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -258,27 +280,35 @@ end;
 
 { TScryptTests }
 
-procedure TScryptTests.SelfTest_SHA256cng;
+procedure TScryptTests.Test_SHA256;
 var
 	sha256: IHashAlgorithm;
 begin
-	sha256 := TScryptCracker.GetHashAlgorithm('SHA256cng');
+	sha256 := TScryptCracker.CreateObject('SHA256') as IHashAlgorithm;
 	TSHA256Tester.Test(sha256);
 end;
 
-procedure TScryptTests.SelfTest_SHA256csp;
+procedure TScryptTests.Test_SHA256_Cng;
 var
 	sha256: IHashAlgorithm;
 begin
-	sha256 := TScryptCracker.GetHashAlgorithm('SHA256csp');
+	sha256 := TScryptCracker.CreateObject('SHA256.Cng') as IHashAlgorithm;
+	TSHA256Tester.Test(sha256);
+end;
+
+procedure TScryptTests.Test_SHA256_Csp;
+var
+	sha256: IHashAlgorithm;
+begin
+	sha256 := TScryptCracker.CreateObject('SHA256.Csp') as IHashAlgorithm;
   	TSHA256Tester.Test(sha256);
 end;
 
-procedure TScryptTests.SelfTest_SHA256_PurePascal;
+procedure TScryptTests.Test_SHA256_PurePascal;
 var
 	sha256: IHashAlgorithm;
 begin
-	sha256 := TScryptCracker.GetHashAlgorithm('SHA256PurePascal');
+	sha256 := TScryptCracker.CreateObject('SHA256.PurePascal') as IHashAlgorithm;
 	TSHA256Tester.Test(sha256);
 end;
 
@@ -550,7 +580,7 @@ var
 		bestTime: Int64;
 		i: Integer;
 	begin
-		hash := TScryptCracker.GetHashAlgorithm(HashAlgorithmName);
+		hash := TScryptCracker.CreateObject(HashAlgorithmName) as IHashAlgorithm;
 
 		bestTime := 0;
 
@@ -572,15 +602,16 @@ begin
 	data := TScrypt.GetBytes('hash test', 'Scrypt for Delphi', 1, 1, 1, 1*1024*1024); //1 MB
 
 	Status(Format('%s		%s', ['Algorithm', 'Speed (MB/s)']));
-	Test('SHA1PurePascal');
-	Test('SHA1csp');
-	Test('SHA1Cng');
-	Test('SHA256PurePascal');
-	Test('SHA256csp');
-	Test('SHA256Cng');
+
+	Test('SHA1.PurePascal');
+	Test('SHA1.Csp');
+	Test('SHA1.Cng');
+	Test('SHA256.PurePascal');
+	Test('SHA256.Csp');
+	Test('SHA256.Cng');
 end;
 
-procedure TScryptTests.Test_SHA1_PurePascal_Benchmark;
+procedure TScryptTests.Benchmark_SHA1_PurePascal;
 var
 	hash: IHashAlgorithm;
 	t1, t2: Int64;
@@ -588,10 +619,13 @@ var
 	best: Int64;
 	i: Integer;
 begin
-	hash := TScryptCracker.GetHashAlgorithm('SHA1PurePascal');
-	data := TScryptCracker(FScrypt).PBKDF2(hash, 'hash test', nil^, 0, 1, 1*1024*1024); //1 MB
-	best := 0;
+	//Generate 1 MB of test data to hash
+	data := TScrypt.GetBytes('hash test', 'Scrypt for Delphi', 1, 1, 1, 1*1024*1024); //1 MB
 
+	//Get our pure pascal SHA-1 implementation
+	hash := TScryptCracker.CreateObject('SHA1.PurePascal') as IHashAlgorithm;
+
+	best := 0;
 	OutputDebugString('SAMPLING ON');
 	for i := 1 to 60 do
 	begin
@@ -606,7 +640,7 @@ begin
 	Status(Format('%s: %.3f MB/s', ['TSHA1', (Length(data)/1024/1024) / (best/FFreq)]));
 end;
 
-procedure TScryptTests.Test_SHA256_PurePascal_Benchmark;
+procedure TScryptTests.Benchmark_SHA256_PurePascal;
 var
 	hash: IHashAlgorithm;
 	t1, t2: Int64;
@@ -614,13 +648,12 @@ var
 	best: Int64;
 	i: Integer;
 begin
-	//Use the faster SHA1 to generate some test data
-	hash := TScryptCracker.GetHashAlgorithm('SHA1');
-	data := TScryptCracker(FScrypt).PBKDF2(hash, 'hash test', nil^, 0, 1, 1*1024*1024); //1 MB
-	best := 0;
+	//Generate 1 MB of test data to hash
+	data := TScrypt.GetBytes('hash test', 'Scrypt for Delphi', 1, 1, 1, 1*1024*1024); //1 MB
 
 	//Benchmark SHA256PurePascal with the test data
-	hash := TScryptCracker.GetHashAlgorithm('SHA256PurePascal');
+	best := 0;
+	hash := TScryptCracker.CreateObject('SHA256.PurePascal') as IHashAlgorithm;
 	OutputDebugString('SAMPLING ON');
 	for i := 1 to 60 do
 	begin
@@ -736,16 +769,13 @@ begin
 	end;
 end;
 
-procedure TScryptTests.SelfTest_HMAC_SHA1;
+procedure TScryptTests.Tester_HMAC_SHA1(HMACsha1: IHmacAlgorithm);
 
 	procedure t(const Key: AnsiString; const Data: AnsiString; const ExpectedDigest: array of Byte);
 	var
 		digest: TBytes;
-		hash: IHashAlgorithm;
 	begin
-		hash := TScryptCracker.GetHashAlgorithm('SHA1');
-
-		digest := TScryptCracker(FScrypt).HMAC(hash, Key[1], Length(Key), Data[1], Length(Data));
+		digest := HMACsha1.HashData(Key[1], Length(Key), Data[1], Length(Data));
 
 		if (Length(ExpectedDigest) <> Length(digest)) then
 			raise EScryptException.CreateFmt('Scrypt self-test failed: Length failed with Key "%s" and Data "%s"',
@@ -763,102 +793,135 @@ begin
 	//From RFC 2022: Test Cases for HMAC-MD5 and HMAC-SHA-1
 
 {
-test_case =     1
-key =           0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
-key_len =       20
-data =          "Hi There"
-data_len =      8
-digest =        0xb617318655057264e28bc0b6fb378c8ef146be00
+	test_case =     1
+	key =           0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
+	key_len =       20
+	data =          "Hi There"
+	data_len =      8
+	digest =        0xb617318655057264e28bc0b6fb378c8ef146be00
 }
 	t(StringOfChar(AnsiChar($0b), 20), 'Hi There', [$b6, $17, $31, $86, $55, $05, $72, $64, $e2, $8b, $c0, $b6, $fb, $37, $8c, $8e, $f1, $46, $be, $00]);
 
 {
-test_case =     2
-key =           "Jefe"
-key_len =       4
-data =          "what do ya want for nothing?"
-data_len =      28
-digest =        0xeffcdf6ae5eb2fa2d27416d5f184df9c259a7c79
+	test_case =     2
+	key =           "Jefe"
+	key_len =       4
+	data =          "what do ya want for nothing?"
+	data_len =      28
+	digest =        0xeffcdf6ae5eb2fa2d27416d5f184df9c259a7c79
 }
 	t('Jefe', 'what do ya want for nothing?', [$ef, $fc, $df, $6a, $e5, $eb, $2f, $a2, $d2, $74, $16, $d5, $f1, $84, $df, $9c, $25, $9a, $7c, $79]);
 
 {
-test_case =     3
-key =           0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-key_len =       20
-data =          0xdd repeated 50 times
-data_len =      50
-digest =        0x125d7342b9ac11cd91a39af48aa17b4f63f175d3
+	test_case =     3
+	key =           0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	key_len =       20
+	data =          0xdd repeated 50 times
+	data_len =      50
+	digest =        0x125d7342b9ac11cd91a39af48aa17b4f63f175d3
 }
 	t(StringOfChar(AnsiChar($aa), 20), StringOfChar(AnsiChar($dd), 50), [$12, $5d, $73, $42, $b9, $ac, $11, $cd, $91, $a3, $9a, $f4, $8a, $a1, $7b, $4f, $63, $f1, $75, $d3]);
 
 {
-test_case =     4
-key =           0x0102030405060708090a0b0c0d0e0f10111213141516171819
-key_len =       25
-data =          0xcd repeated 50 times
-data_len =      50
-digest =        0x4c9007f4026250c6bc8414f9bf50c86c2d7235da
+	test_case =     4
+	key =           0x0102030405060708090a0b0c0d0e0f10111213141516171819
+	key_len =       25
+	data =          0xcd repeated 50 times
+	data_len =      50
+	digest =        0x4c9007f4026250c6bc8414f9bf50c86c2d7235da
 }
 	t(#$01#$02#$03#$04#$05#$06#$07#$08#$09#$0a#$0b#$0c#$0d#$0e#$0f#$10#$11#$12#$13#$14#$15#$16#$17#$18#$19,
 			StringOfChar(AnsiChar($cd), 50),
 			[$4c,$90,$07,$f4,$02,$62,$50,$c6,$bc,$84,$14,$f9,$bf,$50,$c8,$6c,$2d,$72,$35,$da]);
 
 {
-test_case =     5
-key =           0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c
-key_len =       20
-data =          "Test With Truncation"
-data_len =      20
-digest =        0x4c1a03424b55e07fe7f27be1d58bb9324a9a5a04
-digest-96 =     0x4c1a03424b55e07fe7f27be1
+	test_case =     5
+	key =           0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c
+	key_len =       20
+	data =          "Test With Truncation"
+	data_len =      20
+	digest =        0x4c1a03424b55e07fe7f27be1d58bb9324a9a5a04
+	digest-96 =     0x4c1a03424b55e07fe7f27be1
 }
 	t(StringOfChar(AnsiChar($0c), 20), 'Test With Truncation',
 			[$4c,$1a,$03,$42,$4b,$55,$e0,$7f,$e7,$f2,$7b,$e1,$d5,$8b,$b9,$32,$4a,$9a,$5a,$04]);
 
 {
-test_case =     6
-key =           0xaa repeated 80 times
-key_len =       80
-data =          "Test Using Larger Than Block-Size Key - Hash Key First"
-data_len =      54
-digest =        0xaa4ae5e15272d00e95705637ce8a3b55ed402112
+	test_case =     6
+	key =           0xaa repeated 80 times
+	key_len =       80
+	data =          "Test Using Larger Than Block-Size Key - Hash Key First"
+	data_len =      54
+	digest =        0xaa4ae5e15272d00e95705637ce8a3b55ed402112
 }
 	t(StringOfChar(AnsiChar($aa), 80), 'Test Using Larger Than Block-Size Key - Hash Key First',
 			[$aa,$4a,$e5,$e1,$52,$72,$d0,$0e,$95,$70,$56,$37,$ce,$8a,$3b,$55,$ed,$40,$21,$12]);
 
 {
-test_case =     7
-key =           0xaa repeated 80 times
-key_len =       80
-data =          "Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data"
-data_len =      73
-digest =        0xe8e99d0f45237d786d6bbaa7965c7808bbff1a91
+	test_case =     7
+	key =           0xaa repeated 80 times
+	key_len =       80
+	data =          "Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data"
+	data_len =      73
+	digest =        0xe8e99d0f45237d786d6bbaa7965c7808bbff1a91
 }
 	t(StringOfChar(AnsiChar($aa), 80),
 			'Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data',
 			[$e8,$e9,$9d,$0f,$45,$23,$7d,$78,$6d,$6b,$ba,$a7,$96,$5c,$78,$08,$bb,$ff,$1a,$91]);
 end;
 
-procedure TScryptTests.SelfTest_HMAC_SHA256;
+procedure TScryptTests.Test_HMAC_SHA1;
+var
+	hash: IHmacAlgorithm;
+begin
+	hash := TScryptCracker.CreateObject('HMAC.SHA1') as IHmacAlgorithm;
+	Tester_HMAC_SHA1(hash);
+	hash := nil;
+end;
 
-	procedure t(const Key: AnsiString; const Data: AnsiString; const ExpectedDigest: array of Byte);
-	var
-		digest: TBytes;
-		hash: IHashAlgorithm;
-	begin
-		hash := TScryptCracker(FScrypt).GetHashAlgorithm('SHA256');
+procedure TScryptTests.Test_HMAC_SHA1_Cng;
+var
+	hash: IHmacAlgorithm;
+begin
+	hash := TScryptCracker.CreateObject('HMAC.SHA1.Cng') as IHmacAlgorithm;
+	Tester_HMAC_SHA1(hash);
+	hash := nil;
+end;
 
-		digest := TScryptCracker(FScrypt).HMAC(hash, Key[1], Length(Key), Data[1], Length(Data));
+procedure TScryptTests.Test_HMAC_SHA1_PurePascal;
+var
+	hash: IHmacAlgorithm;
+begin
+	hash := TScryptCracker.CreateObject('HMAC.SHA1.PurePascal') as IHmacAlgorithm;
+	Tester_HMAC_SHA1(hash);
+	hash := nil;
+end;
 
-		if (Length(ExpectedDigest) <> Length(digest)) then
-			raise EScryptException.CreateFmt('Scrypt self-test failed: Length failed with Key "%s" and Data "%s"',
-					[Key, Data]);
+procedure TScryptTests.Test_HMAC_SHA256;
+var
+	hmac: IHmacAlgorithm;
+begin
+	hmac := TScryptCracker.CreateObject('HMAC.SHA256') as IHmacAlgorithm;
+	Tester_HMAC_SHA256(hmac);
+end;
 
-		if not CompareMem(@ExpectedDigest, @digest[0], 20) then
-			raise EScryptException.CreateFmt('Scrypt self-test failed: Compare failed with Key "%s" and Data "%s"',
-					[Key, Data]);
-	end;
+procedure TScryptTests.Test_HMAC_SHA256_Cng;
+var
+	hmac: IHmacAlgorithm;
+begin
+	hmac := TScryptCracker.CreateObject('HMAC.SHA256.Cng') as IHmacAlgorithm;
+	Tester_HMAC_SHA256(hmac);
+end;
+
+procedure TScryptTests.Test_HMAC_SHA256_PurePascal;
+var
+	hmac: IHmacAlgorithm;
+begin
+	hmac := TScryptCracker.CreateObject('HMAC.SHA256.PurePascal') as IHmacAlgorithm;
+	Tester_HMAC_SHA256(hmac);
+end;
+
+procedure TScryptTests.Tester_HMAC_SHA256(HMACsha256: IHmacAlgorithm);
 
 	procedure Test(const KeyHexString: string; const DataHexString: string; const ExpectedDigestHexString: string; TruncateToBytes: Integer=0);
 	var
@@ -866,15 +929,13 @@ procedure TScryptTests.SelfTest_HMAC_SHA256;
 		data: TBytes;
 		expected: TBytes;
 		actual: TBytes;
-		hash: IHashAlgorithm;
 	begin
+		//Deserialize the test data
 		key := HexToBytes(KeyHexString);
 		data := HexToBytes(DataHexString);
 		expected := HexToBytes(ExpectedDigestHexString);
 
-		hash := TScryptCracker(FScrypt).GetHashAlgorithm('SHA256');
-
-		actual := TScryptCracker(FScrypt).HMAC(hash, key[0], Length(key), data[0], Length(data));
+		actual := HMACsha256.HashData(key[0], Length(key), data[0], Length(data));
 
 		if TruncateToBytes > 0 then
 			actual := Copy(actual, 0, TruncateToBytes);
@@ -955,6 +1016,126 @@ begin
 			{HMAC-SHA-256}	'9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2');
 end;
 
+procedure TScryptTests.Tester_PBKDF2_SHA256(Pbkdf2sha256: IPBKDF2Algorithm);
+
+	procedure t(Password: UnicodeString; Salt: AnsiString; IterationCount: Integer; DerivedKeyLength: Integer;
+			const ExpectedDerivedKeyHexString: string);
+	var
+		expected: TBytes;
+		actual: TBytes; //derivedKey
+	begin
+		expected := HexToBytes(ExpectedDerivedKeyHexString);
+		actual := Pbkdf2sha256.GetBytes(Password, Salt[1], Length(Salt), IterationCount, DerivedKeyLength);
+
+		if (DerivedKeyLength <> Length(actual)) then
+			raise EScryptException.CreateFmt('Scrypt self-test failed: Derived key length (%d) wasn''t the required %d',
+					[Length(actual), DerivedKeyLength]);
+
+		if not CompareMem(@expected[0], @actual[0], DerivedKeyLength) then
+			raise EScryptException.CreateFmt('Scrypt self-test failed: Derived key was invalid for Password "%s", Salt="%s", IterationCount="%d", DerivedKeyLength=%d',
+					[Password, Salt, IterationCount, DerivedKeyLength]);
+	end;
+begin
+	{
+		From http://stackoverflow.com/a/5136918/12597
+	}
+
+	{
+		Input:
+		 P = "password" (8 octets)
+		 S = "salt" (4 octets)
+		 c = 1
+		 dkLen = 32
+
+	  Output:
+		 DK = 12 0f b6 cf fc f8 b3 2c 43 e7 22 52 56 c4 f8 37 a8 65 48 c9 2c cc 35 48 08 05 98 7c b7 0b e1 7b   (20 octets)
+}
+	t('password', 'salt', 1, 32, '12 0f b6 cf fc f8 b3 2c 43 e7 22 52 56 c4 f8 37 a8 65 48 c9 2c cc 35 48 08 05 98 7c b7 0b e1 7b');
+
+{
+	  Input:
+		 P = "password" (8 octets)
+		 S = "salt" (4 octets)
+		 c = 2
+		 dkLen = 32
+
+	  Output:
+		 DK = ae 4d 0c 95 af 6b 46 d3 2d 0a df f9 28 f0 6d d0 2a 30 3f 8e f3 c2 51 df d6 e2 d8 5a 95 47 4c 43             (32 octets)
+}
+	t('password', 'salt', 2, 32, 'ae 4d 0c 95 af 6b 46 d3 2d 0a df f9 28 f0 6d d0 2a 30 3f 8e f3 c2 51 df d6 e2 d8 5a 95 47 4c 43');
+
+{
+	  Input:
+		 P = "password" (8 octets)
+		 S = "salt" (4 octets)
+		 c = 4096
+		 dkLen = 32
+
+	  Output:
+		 DK = c5 e4 78 d5 92 88 c8 41 aa 53 0d b6 84 5c 4c 8d 96 28 93 a0 01 ce 4e 11 a4 96 38 73 aa 98 13 4a  (32 octets)
+}
+	t('password', 'salt', 4096, 20, 'c5 e4 78 d5 92 88 c8 41 aa 53 0d b6 84 5c 4c 8d 96 28 93 a0 01 ce 4e 11 a4 96 38 73 aa 98 13 4a');
+
+{
+	  Input:
+		 P = "password" (8 octets)
+		 S = "salt" (4 octets)
+		 c = 16777216
+		 dkLen = 32
+
+	  Output:
+		 DK = cf 81 c6 6f e8 cf c0 4d 1f 31 ec b6 5d ab 40 89 f7 f1 79 e8 9b 3b 0b cb 17 ad 10 e3 ac 6e ba 46  (32 octets)
+}
+	//This test works, but it's 16,777,216 rounds
+//	t('password', 'salt', 16777216, 20, 'cf 81 c6 6f e8 cf c0 4d 1f 31 ec b6 5d ab 40 89 f7 f1 79 e8 9b 3b 0b cb 17 ad 10 e3 ac 6e ba 46');
+
+{
+	  Input:
+		 P = "passwordPASSWORDpassword" (24 octets)
+		 S = "saltSALTsaltSALTsaltSALTsaltSALTsalt" (36 octets)
+		 c = 4096
+		 dkLen = 40
+
+	  Output:
+		 DK = 34 8c 89 db cb d3 2b 2f 32 d8 14 b8 11 6e 84 cf 2b 17 34 7e bc 18 00 18 1c 4e 2a 1f b8 dd 53 e1 c6 35 51 8c 7d ac 47 e9  (40 octets)
+}
+	t('passwordPASSWORDpassword', 'saltSALTsaltSALTsaltSALTsaltSALTsalt', 4096, 25,
+			'34 8c 89 db cb d3 2b 2f 32 d8 14 b8 11 6e 84 cf 2b 17 34 7e bc 18 00 18 1c 4e 2a 1f b8 dd 53 e1 c6 35 51 8c 7d ac 47 e9');
+
+{
+	  Input:
+		 P = "pass\0word" (9 octets)
+		 S = "sa\0lt" (5 octets)
+		 c = 4096
+		 dkLen = 16
+
+	  Output:
+		 DK = 89 b6 9d 05 16 f8 29 89 3c 69 62 26 65 0a 86 87 (16 octets)
+}
+	t('pass'#0'word', 'sa'#0'lt', 4096, 16, '89 b6 9d 05 16 f8 29 89 3c 69 62 26 65 0a 86 87');
+
+
+
+
+{
+	http://tools.ietf.org/html/draft-josefsson-scrypt-kdf-00#section-10
+
+	10.  Test Vectors for PBKDF2 with HMAC-SHA-256
+
+		The test vectors below can be used to verify the PBKDF2-HMAC-SHA-256
+		[RFC2898] function.  The password and salt strings are passed as
+		sequences of ASCII [ANSI.X3-4.1986] octets.
+}
+	t('passwd', 'salt', 1, 64,
+			'55 ac 04 6e 56 e3 08 9f ec 16 91 c2 25 44 b6 05 f9 41 85 21 6d de 04 65 e6 8b 9d 57 c2 0d ac bc'+
+			'49 ca 9c cc f1 79 b6 45 99 16 64 b3 9d 77 ef 31 7c 71 b8 45 b1 e3 0b d5 09 11 20 41 d3 a1 97 83');
+
+
+	t('Password', 'NaCl', 80000, 64,
+			'4d dc d8 f6 0b 98 be 21 83 0c ee 5e f2 27 01 f9 64 1a 44 18 d0 4c 04 14 ae ff 08 87 6b 34 ab 56'+
+			'a1 d4 25 a1 22 58 33 54 9a db 84 1b 51 c9 b3 17 6a 27 2b de bb a1 d0 78 47 8f 62 b3 97 f3 3c 8d');
+end;
+
 procedure TScryptTests.Test_PasswordHashPerformance;
 var
 	s: string;
@@ -983,15 +1164,15 @@ var
 begin
 	password := 'correct horse battery staple';
 
+	Status('Password: "'+password+'"');
 	hash := TScrypt.HashPassword(password);
 
+	Status('Hash: "'+hash+'"');
 	CheckTrue(TScrypt.CheckPassword(password, hash));
 end;
 
-procedure TScryptTests.Test_PBKDF2_SHA1;
+procedure TScryptTests.Tester_PBKDF2_SHA1(Pbkdf: IPBKDF2Algorithm);
 
-var
-	hash: IHashAlgorithm;
 	procedure t(Password: UnicodeString; Salt: AnsiString; IterationCount: Integer; DerivedKeyLength: Integer;
 			const ExpectedDerivedKey: array of byte);
 	var
@@ -1000,7 +1181,7 @@ var
 		s: string;
 	begin
 		t1 := Self.GetTimestamp;
-		derivedKey := TScryptCracker(FScrypt).PBKDF2(hash, Password, Salt[1], Length(Salt), IterationCount, DerivedKeyLength);
+		derivedKey := Pbkdf.GetBytes(Password, Salt[1], Length(Salt), IterationCount, DerivedKeyLength);
 		t2 := Self.GetTimestamp;
 
 		s := Format('%.3f ms', [(t2-t1)/FFreq*1000]);
@@ -1015,8 +1196,6 @@ var
 					[Password, Salt, IterationCount, DerivedKeyLength]);
 	end;
 begin
-	hash := TScryptCracker(FScrypt).GetHashAlgorithm('SHA1');
-
 {
 	PKCS #5: Password-Based Key Derivation Function 2 (PBKDF2) Test Vectors
 	http://tools.ietf.org/html/rfc6070
@@ -1097,20 +1276,94 @@ begin
 			[$56,$fa,$6a,$a7,$55,$48,$09,$9d,$cc,$37,$d7,$f0,$34,$25,$e0,$c3]);
 end;
 
-procedure TScryptTests.Test_PBKDF2_SHA1_Benchmark;
+procedure TScryptTests.Benchmark_HMACs;
 var
-	hash: IHashAlgorithm;
-	t1, t2: Int64;
+	data: TBytes;
+const
+	password: AnsiString = 'correct horse battery staple';
+
+	procedure Test(HmacAlgorithmName: string);
+	var
+		hmac: IHmacAlgorithm;
+		t1, t2: Int64;
+		bestTime: Int64;
+		i: Integer;
+	begin
+		hmac := TScryptCracker.CreateObject(HmacAlgorithmName) as IHmacAlgorithm;
+
+		bestTime := 0;
+
+		//Fastest time of 30 runs
+		for i := 1 to 30 do
+		begin
+			t1 := GetTimestamp;
+			hmac.HashData(password[1], Length(password), data[0], Length(data));
+			t2 := GetTimestamp;
+
+			t2 := t2-t1;
+			if (bestTime = 0) or (t2 < bestTime) then
+				bestTime := t2;
+      end;
+
+		Status(Format('%s	%.3f MB/s', [HmacAlgorithmName, (Length(data)/1024/1024) / (bestTime/FFreq)]));
+	end;
 begin
-	hash := TScryptCracker(FScrypt).GetHashAlgorithm('SHA1'); //fastest SHA1
+	//generate 1 MB of sample data to HMAC
+	data := TScrypt.GetBytes('hash test', 'Scrypt for Delphi', 1, 1, 1, 1*1024*1024); //1 MB
 
-	OutputDebugString('SAMPLING ON');
-	t1 := GetTimestamp;
-	TScryptCracker(FScrypt).PBKDF2(hash, 'foo', 'bar', 3, 1, 10*1024*1024);
-	t2 := GetTimestamp;
-	OutputDebugString('SAMPLING OFF');
+	Status(Format('%s	%s', ['Algorithm', 'Speed (MB/s)']));
 
-	Status(Format('%.2f ms', [(t2-t1)/FFreq*1000]));
+	Test('HMAC.SHA1');
+	Test('HMAC.SHA1.PurePascal');
+	Test('HMAC.SHA1.csp');
+	Test('HMAC.SHA1.Cng');
+	Test('HMAC.SHA256');
+	Test('HMAC.SHA256.PurePascal');
+	Test('HMAC.SHA256.csp');
+	Test('HMAC.SHA256.Cng');
+end;
+
+procedure TScryptTests.Benchmark_PBKDF2s;
+const
+	password: string = 'correct horse battery staple';
+	salt: AnsiString = 'sea salt';
+
+	procedure Test(HmacAlgorithmName: string);
+	var
+		db: IPBKDF2Algorithm;
+		t1, t2: Int64;
+		bestTime: Int64;
+		i: Integer;
+	begin
+		db := TScryptCracker.CreateObject(HmacAlgorithmName) as IPBKDF2Algorithm;
+
+		bestTime := 0;
+
+		//Fastest time of 30 runs
+		for i := 1 to 30 do
+		begin
+			t1 := GetTimestamp;
+			db.GetBytes(password, salt[1], Length(salt), 1000, 32);
+			t2 := GetTimestamp;
+
+			t2 := t2-t1;
+			if (bestTime = 0) or (t2 < bestTime) then
+				bestTime := t2;
+      end;
+
+		Status(Format('%s	%.3f us', [HmacAlgorithmName, (bestTime/FFreq*1000000)]));
+	end;
+begin
+	Status(Format('%s	%s', ['Algorithm', 'Speed (us)']));
+
+	Test('PBKDF2.SHA1');
+	Test('PBKDF2.SHA1.PurePascal');
+//	Test('PBKDF2.SHA1.csp');
+	Test('PBKDF2.SHA1.Cng');
+	Test('PBKDF2.SHA256');
+	Test('PBKDF2.SHA256.PurePascal');
+//	Test('PBKDF2.SHA256.csp');
+	Test('PBKDF2.SHA256.Cng');
 end;
 
 procedure TScryptTests.Test_Salsa208Core;
@@ -1306,131 +1559,55 @@ begin
 	Self.CheckEqualsMem(@expected[0], @actual[0], Length(expected), 'ROMix data failed');
 end;
 
-procedure TScryptTests.SelfTest_PBKDF2_SHA256;
-
-	procedure t(Password: UnicodeString; Salt: AnsiString; IterationCount: Integer; DerivedKeyLength: Integer;
-			const ExpectedDerivedKeyHexString: string);
-	var
-		hash: IHashAlgorithm;
-		expected: TBytes;
-		actual: TBytes; //derivedKey
-	begin
-		hash := TScryptCracker(FScrypt).GetHashAlgorithm('SHA256');
-
-		actual := TScryptCracker(FScrypt).PBKDF2(hash, Password, Salt[1], Length(Salt), IterationCount, DerivedKeyLength);
-
-		expected := HexToBytes(ExpectedDerivedKeyHexString);
-
-		if (DerivedKeyLength <> Length(actual)) then
-			raise EScryptException.CreateFmt('Scrypt self-test failed: Derived key length (%d) wasn''t the required %d',
-					[Length(actual), DerivedKeyLength]);
-
-		if not CompareMem(@expected[0], @actual[0], DerivedKeyLength) then
-			raise EScryptException.CreateFmt('Scrypt self-test failed: Derived key was invalid for Password "%s", Salt="%s", IterationCount="%d", DerivedKeyLength=%d',
-					[Password, Salt, IterationCount, DerivedKeyLength]);
-	end;
+procedure TScryptTests.Test_PBKDF2_SHA1;
+var
+	db: IPBKDF2Algorithm;
 begin
-	{
-		From http://stackoverflow.com/a/5136918/12597
-	}
-
-	{
-		Input:
-		 P = "password" (8 octets)
-		 S = "salt" (4 octets)
-		 c = 1
-		 dkLen = 32
-
-	  Output:
-		 DK = 12 0f b6 cf fc f8 b3 2c 43 e7 22 52 56 c4 f8 37 a8 65 48 c9 2c cc 35 48 08 05 98 7c b7 0b e1 7b   (20 octets)
-}
-	t('password', 'salt', 1, 32, '12 0f b6 cf fc f8 b3 2c 43 e7 22 52 56 c4 f8 37 a8 65 48 c9 2c cc 35 48 08 05 98 7c b7 0b e1 7b');
-
-{
-	  Input:
-		 P = "password" (8 octets)
-		 S = "salt" (4 octets)
-		 c = 2
-		 dkLen = 32
-
-	  Output:
-		 DK = ae 4d 0c 95 af 6b 46 d3 2d 0a df f9 28 f0 6d d0 2a 30 3f 8e f3 c2 51 df d6 e2 d8 5a 95 47 4c 43             (32 octets)
-}
-	t('password', 'salt', 2, 32, 'ae 4d 0c 95 af 6b 46 d3 2d 0a df f9 28 f0 6d d0 2a 30 3f 8e f3 c2 51 df d6 e2 d8 5a 95 47 4c 43');
-
-{
-	  Input:
-		 P = "password" (8 octets)
-		 S = "salt" (4 octets)
-		 c = 4096
-		 dkLen = 32
-
-	  Output:
-		 DK = c5 e4 78 d5 92 88 c8 41 aa 53 0d b6 84 5c 4c 8d 96 28 93 a0 01 ce 4e 11 a4 96 38 73 aa 98 13 4a  (32 octets)
-}
-	t('password', 'salt', 4096, 20, 'c5 e4 78 d5 92 88 c8 41 aa 53 0d b6 84 5c 4c 8d 96 28 93 a0 01 ce 4e 11 a4 96 38 73 aa 98 13 4a');
-
-{
-	  Input:
-		 P = "password" (8 octets)
-		 S = "salt" (4 octets)
-		 c = 16777216
-		 dkLen = 32
-
-	  Output:
-		 DK = cf 81 c6 6f e8 cf c0 4d 1f 31 ec b6 5d ab 40 89 f7 f1 79 e8 9b 3b 0b cb 17 ad 10 e3 ac 6e ba 46  (32 octets)
-}
-	//This test works, but it's 16,777,216 rounds
-//	t('password', 'salt', 16777216, 20, 'cf 81 c6 6f e8 cf c0 4d 1f 31 ec b6 5d ab 40 89 f7 f1 79 e8 9b 3b 0b cb 17 ad 10 e3 ac 6e ba 46');
-
-{
-	  Input:
-		 P = "passwordPASSWORDpassword" (24 octets)
-		 S = "saltSALTsaltSALTsaltSALTsaltSALTsalt" (36 octets)
-		 c = 4096
-		 dkLen = 40
-
-	  Output:
-		 DK = 34 8c 89 db cb d3 2b 2f 32 d8 14 b8 11 6e 84 cf 2b 17 34 7e bc 18 00 18 1c 4e 2a 1f b8 dd 53 e1 c6 35 51 8c 7d ac 47 e9  (40 octets)
-}
-	t('passwordPASSWORDpassword', 'saltSALTsaltSALTsaltSALTsaltSALTsalt', 4096, 25,
-			'34 8c 89 db cb d3 2b 2f 32 d8 14 b8 11 6e 84 cf 2b 17 34 7e bc 18 00 18 1c 4e 2a 1f b8 dd 53 e1 c6 35 51 8c 7d ac 47 e9');
-
-{
-	  Input:
-		 P = "pass\0word" (9 octets)
-		 S = "sa\0lt" (5 octets)
-		 c = 4096
-		 dkLen = 16
-
-	  Output:
-		 DK = 89 b6 9d 05 16 f8 29 89 3c 69 62 26 65 0a 86 87 (16 octets)
-}
-	t('pass'#0'word', 'sa'#0'lt', 4096, 16, '89 b6 9d 05 16 f8 29 89 3c 69 62 26 65 0a 86 87');
-
-
-
-
-{
-	http://tools.ietf.org/html/draft-josefsson-scrypt-kdf-00#section-10
-
-	10.  Test Vectors for PBKDF2 with HMAC-SHA-256
-
-		The test vectors below can be used to verify the PBKDF2-HMAC-SHA-256
-		[RFC2898] function.  The password and salt strings are passed as
-		sequences of ASCII [ANSI.X3-4.1986] octets.
-}
-	t('passwd', 'salt', 1, 64,
-			'55 ac 04 6e 56 e3 08 9f ec 16 91 c2 25 44 b6 05 f9 41 85 21 6d de 04 65 e6 8b 9d 57 c2 0d ac bc'+
-			'49 ca 9c cc f1 79 b6 45 99 16 64 b3 9d 77 ef 31 7c 71 b8 45 b1 e3 0b d5 09 11 20 41 d3 a1 97 83');
-
-
-	t('Password', 'NaCl', 80000, 64,
-			'4d dc d8 f6 0b 98 be 21 83 0c ee 5e f2 27 01 f9 64 1a 44 18 d0 4c 04 14 ae ff 08 87 6b 34 ab 56'+
-			'a1 d4 25 a1 22 58 33 54 9a db 84 1b 51 c9 b3 17 6a 27 2b de bb a1 d0 78 47 8f 62 b3 97 f3 3c 8d');
+	db := TScryptCracker.CreateObject('PBKDF2.SHA1') as IPBKDF2Algorithm;
+	Tester_PBKDF2_SHA1(db);
 end;
 
-procedure TScryptTests.SelfTest_Scrypt;
+procedure TScryptTests.Test_PBKDF2_SHA1_Cng;
+var
+	db: IPBKDF2Algorithm;
+begin
+	db := TScryptCracker.CreateObject('PBKDF2.SHA1.Cng') as IPBKDF2Algorithm;
+	Tester_PBKDF2_SHA1(db);
+end;
+
+procedure TScryptTests.Test_PBKDF2_SHA1_PurePascal;
+var
+	db: IPBKDF2Algorithm;
+begin
+	db := TScryptCracker.CreateObject('PBKDF2.SHA1.PurePascal') as IPBKDF2Algorithm;
+	Tester_PBKDF2_SHA1(db);
+end;
+
+procedure TScryptTests.Test_PBKDF2_SHA256;
+var
+	db: IPBKDF2Algorithm;
+begin
+	db := TScryptCracker.CreateObject('PBKDF2.SHA256') as IPBKDF2Algorithm;
+	Tester_PBKDF2_SHA256(db);
+end;
+
+procedure TScryptTests.Test_PBKDF2_SHA256_Cng;
+var
+	db: IPBKDF2Algorithm;
+begin
+	db := TScryptCracker.CreateObject('PBKDF2.SHA256.Cng') as IPBKDF2Algorithm;
+	Tester_PBKDF2_SHA256(db);
+end;
+
+procedure TScryptTests.Test_PBKDF2_SHA256_PurePascal;
+var
+	db: IPBKDF2Algorithm;
+begin
+	db := TScryptCracker.CreateObject('PBKDF2.SHA256.PurePascal') as IPBKDF2Algorithm;
+	Tester_PBKDF2_SHA256(db);
+end;
+
+procedure TScryptTests.Test_Scrypt;
 var
 	freq: Int64;
 
@@ -1493,27 +1670,35 @@ begin
 	OutputDebugString('SAMPLING OFF');
 end;
 
-procedure TScryptTests.SelfTest_SHA1_PurePascal;
+procedure TScryptTests.Test_SHA1_PurePascal;
 var
 	sha1: IHashAlgorithm;
 begin
-	sha1 := TScryptCracker(FScrypt).GetHashAlgorithm('SHA1PurePascal');
+	sha1 := TScryptCracker(FScrypt).CreateObject('SHA1.PurePascal') as IHashAlgorithm;
 	TSHA1Tester.Test(sha1);
 end;
 
-procedure TScryptTests.SelfTest_SHA1Cng;
+procedure TScryptTests.Test_SHA1;
 var
 	sha1: IHashAlgorithm;
 begin
-	sha1 := TScryptCracker(FScrypt).GetHashAlgorithm('SHA1Cng');
+	sha1 := TScryptCracker.CreateObject('SHA1') as IHashAlgorithm;
 	TSHA1Tester.Test(sha1);
 end;
 
-procedure TScryptTests.SelfTest_SHA1csp;
+procedure TScryptTests.Test_SHA1_Cng;
 var
 	sha1: IHashAlgorithm;
 begin
-	sha1 := TScryptCracker(FScrypt).GetHashAlgorithm('SHA1csp');
+	sha1 := TScryptCracker(FScrypt).CreateObject('SHA1.Cng') as IHashAlgorithm;
+	TSHA1Tester.Test(sha1);
+end;
+
+procedure TScryptTests.Test_SHA1_Csp;
+var
+	sha1: IHashAlgorithm;
+begin
+	sha1 := TScryptCracker(FScrypt).CreateObject('SHA1.Csp') as IHashAlgorithm;
 	TSHA1Tester.Test(sha1);
 end;
 
