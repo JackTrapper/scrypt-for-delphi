@@ -17,12 +17,12 @@
 
 		secretKey := TScrypt.GetBytes('correct horse battery staple', 'seasalt', 16); //returns 16 bytes (128 bits)
 
-	If you know what values of the N (CostFactor), r (block size), and p (parallelization factor) scrypt
-	parameters you want, you can specify them:
+	If you know what values of the scrypt N (CostFactor), r (block size), and p (parallelization factor)  parameters you want,
+	you can specify them:
 
 			secretKey := TScrypt.GetBytes('correct horse battery staple', 'seasalt', {N=14}, {r=}8, {p=}1, 32); //returns 32 bytes (256 bits)
 
-   where
+	where
 			BlockSize (r) = 8
 			CostFactor (N) = 14 (i.e. 2^14 = 16384 iterations)
 			ParallelizationFactor (p) = 1
@@ -42,21 +42,21 @@
 
 	will return string in the format of:
 
-	$s0$params$salt$key
+		$s0$params$salt$key
 
-	  s0     - version 0 of the format with 128-bit salt and 256-bit derived key
-	  params - 32-bit hex integer containing log2(N) (16 bits), r (8 bits), and p (8 bits)
-	  salt   - base64-encoded salt
-	  key    - base64-encoded derived key
+			s0     - version 0 of the format with 128-bit salt and 256-bit derived key
+			params - 32-bit hex integer containing log2(N) (16 bits), r (8 bits), and p (8 bits)
+			salt   - base64-encoded salt
+			key    - base64-encoded derived key
 
-	  Example:
+	Example:
 
-	    $s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=
+		$s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=
 
-	    passwd = "secret"
-	         N = 14
-	         r = 8
-	         p = 1
+			passwd = "secret"
+			CostFactor = 0xE0 = 14 ==> N = 2^14 = 16,384
+			r = 0x08 = 8
+			p = 0x01 = 1
 
 	Version History
 	===============
@@ -113,7 +113,8 @@
 		| 20 | #N/A | 4006.3 | 5673.7 | 7117.5 | 8781.7 | 9939.3 | 12146.8 | 13136.7 | 14539.6 | 16785.1 |   #mem |   #mem |    #mem |    #mem |    #mem |    #N/A |
 
 	Delphi is limited to allocating $7FFFFFFF memory using GetMem or SetLength.
-	This means that N=20,r=16 requires 128*16*2^20 = 0x80000000 bytes of memory. This exceeds the amount you can ask for in an Integer.
+	This means that N=20,r=16 requires 128*16*2^20 = 0x80000000 bytes of memory.
+	This exceeds the amount you can ask for in an Integer.(GetMem and SetLength are defined as taking a 32-bit integer, even in 64-bit applications)
 	In practice, your limit in a 32-bit process will be lower, given the 2GB limit of virtual address space, and that there are
 	other things already in your address space (e.g. the application, dlls).
 
@@ -187,6 +188,7 @@ type
 		function BlockMix(const B: array of Byte): TBytes; //mixes r 128-byte blocks
 		function ROMix(const B; BlockSize, CostFactor: Cardinal): TBytes;
 
+		function GenerateScryptSalt(const Passphrase: UnicodeString; const Salt: array of Byte; const CostFactor, BlockSizeFactor, ParallelizationFactor: UInt64): TBytes;
 		function DeriveBytes(const Passphrase: UnicodeString; const Salt: array of Byte; const CostFactor, BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
 
 		procedure GetDefaultParameters(out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal);
@@ -197,7 +199,7 @@ type
 			Let people have access to our hash functions. They've been tested and verified, and they work well.
 			Besides, we have HMAC and PBKDF2. That's gotta be useful for someone.
 		}
-      class function CreateObject(ObjectName: string): IInterface;
+		class function CreateObject(ObjectName: string): IInterface;
 	public
 		constructor Create;
 
@@ -208,7 +210,10 @@ type
 		class function GetBytes(const Passphrase: UnicodeString; const Salt: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; DesiredBytes: Integer): TBytes; overload;
 
 		{
-			Scrypt is meant for key generation. But people can still use it for password storage.
+			Scrypt is not meant for password storage; it is meant for key generation.
+			But people can still use it for password hashing.
+			Unlike Bcrypt, there is no standard representation for passwords hashed with Scrypt.
+			So we can make one, and provide the function to validate it
 		}
 		class function HashPassword(const Passphrase: UnicodeString): string; overload;
 		class function HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string; overload;
@@ -317,7 +322,7 @@ begin
 
 		Obtain the formatted message for the given Win32 ErrorCode
 		Let the OS initialize the Buffer variable. Need to LocalFree it afterward.
-  }
+	}
 	Hand := SafeLoadLibrary('ntdll.dll');
 
 	Len := FormatMessage(
@@ -533,6 +538,9 @@ type
 		function Finalize: TBytes;
 	end;
 
+{
+	SHA-256 implemented by Microsoft Crypto Service Provider (CSP)
+}
 	THmac = class(TInterfacedObject, IHmacAlgorithm)
 	private
 		FHash: IHashAlgorithm;
@@ -799,7 +807,7 @@ begin
 		Self.Salsa20InPlace(X[0]);
 
 		//Y[i] = X
-      Move(X[0], Y[64*i], 64);
+		Move(X[0], Y[64*i], 64);
 	end;
 
 	{
@@ -843,7 +851,7 @@ begin
 		Inc(ne, 1);
 		Inc(no, 1);
 		Inc(i, 2);
-   end;
+	end;
 end;
 
 class function TScrypt.BsdBase64Decode(const s: string): TBytes;
@@ -1021,51 +1029,23 @@ begin
 		if Length(actual) = Length(expected) then
 			Result := CompareMem(@expected[0], @actual[0], Length(expected));
 
-   	scrypt.BurnBytes(actual);
+		scrypt.BurnBytes(actual);
 		scrypt.BurnBytes(expected);
-   finally
+	finally
 		scrypt.Free;
-   end;
+	end;
 end;
 
 function TScrypt.DeriveBytes(const Passphrase: UnicodeString; const Salt: array of Byte; const CostFactor,
 		BlockSizeFactor, ParallelizationFactor: UInt64; DesiredBytes: Integer): TBytes;
 var
-	B: TBytes;
-	i: UInt64;
-	blockSize: Integer;
-	blockIndex: Integer;
-	T: TBytes;
+	saltEx: TBytes;
 begin
-	blockSize := 128*BlockSizeFactor;
+	//Step 1. Use Scrypt to generate expensive salt
+	saltEx := Self.GenerateScryptSalt(Passphrase, Salt, CostFactor, BlockSizeFactor, ParallelizationFactor);
 
-	//Step 1. Use PBKDF2 to generate the initial blocks
-	B := Self.PBKDF2(Passphrase, salt[0], Length(salt), 1, ParallelizationFactor*blockSize);
-
-	//Step 2. Run RoMix on each block
-	{
-		Each each ROMix operation can run in parallal on each block.
-		But the downside is that each ROMix itself will consume blockSize*Cost memory.
-
-		LiteCoin uses
-			Cost: 1,024 (costFactor=10 ==> 2^10 = 1024)
-			blockSize: 128 bytes (r=1)
-			parallelizationFactor: 1 (p=1)
-
-			B: [128]
-	}
-	i := 0;
-	while i < ParallelizationFactor do
-	begin
-		//B[i] ← ROMix(B[i])
-		blockIndex := i*blockSize;
-		T := Self.ROMix(B[blockIndex], blockSize, CostFactor);
-		Move(T[0], B[blockIndex], blockSize);
-		Inc(i);
-	end;
-
-	//Step 3. Use PBDKF2 with out password, but use B as the salt
-	Result := Self.PBKDF2(Passphrase, B[0], ParallelizationFactor*blockSize, 1, DesiredBytes);
+	//Step 3. Use PBDKF2 with our password, but use B as the salt
+	Result := Self.PBKDF2(Passphrase, saltEx[0], Length(saltEx), 1, DesiredBytes);
 end;
 
 function TScrypt.FormatPasswordHash(const costFactor, blockSizeFactor, parallelizationFactor: Integer; const Salt,
@@ -1176,7 +1156,7 @@ begin
 {$ENDIF}
 		Result := TScrypt.CreateObject(ObjectName);
 		Exit;
-   end;
+	end;
 
 	if IsAlgo('SHA256') then
 	begin
@@ -1289,6 +1269,45 @@ begin
 	Result := salt;
 end;
 
+function TScrypt.GenerateScryptSalt(const Passphrase: UnicodeString; const Salt: array of Byte; const CostFactor,
+  BlockSizeFactor, ParallelizationFactor: UInt64): TBytes;
+var
+	B: TBytes;
+	i: UInt64;
+	blockSize: Integer;
+	blockIndex: Integer;
+	T: TBytes;
+begin
+	blockSize := 128*BlockSizeFactor;
+
+	//Step 1. Use PBKDF2 to generate the initial blocks
+	B := Self.PBKDF2(Passphrase, salt[0], Length(salt), 1, ParallelizationFactor*blockSize);
+
+	//Step 2. Run RoMix on each block
+	{
+		Each each ROMix operation can run in parallal on each block.
+		But the downside is that each ROMix itself will consume blockSize*Cost memory.
+
+		LiteCoin uses
+			Cost: 1,024 (costFactor=10 ==> 2^10 = 1024)
+			blockSize: 128 bytes (r=1)
+			parallelizationFactor: 1 (p=1)
+
+			B: [128]
+	}
+	i := 0;
+	while i < ParallelizationFactor do
+	begin
+		//B[i] ← ROMix(B[i])
+		blockIndex := i*blockSize;
+		T := Self.ROMix(B[blockIndex], blockSize, CostFactor);
+		Move(T[0], B[blockIndex], blockSize);
+		Inc(i);
+	end;
+
+	Result := B;
+end;
+
 class function TScrypt.GetBytes(const Passphrase, Salt: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; DesiredBytes: Integer): TBytes;
 var
 	saltUtf8: TBytes;
@@ -1348,9 +1367,9 @@ begin
 		derivedBytes := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, parallelizationFactor, SCRYPT_HASH_LEN);
 
 		Result := scrypt.FormatPasswordHash(costFactor, blockSizeFactor, parallelizationFactor, salt, derivedBytes);
-   finally
+	finally
 		scrypt.Free;
-   end;
+	end;
 end;
 
 class function TScrypt.HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string;
@@ -1359,30 +1378,97 @@ var
 	salt, derivedBytes: TBytes;
 begin
 	{
-		Hash the password, using the supplied parameters.
+	Hash the password, using the supplied parameters.
 
-			CostFactor:            log2(N), N = 2^costFactor
-			BlockSizeFactor:       r
-			ParallelizationFactor: p
+		CostFactor:            log2(N), N = 2^costFactor
+		BlockSizeFactor:       r
+		ParallelizationFactor: p
 
-		Password hash is returned as a string of the form:
+	Password hash is returned as a string of the form:
 
-			$s1$NNrrpp$salt$hash
-				NN   - hex encoded N log2 (two hex digits)
-				rr   - hex encoded r in 1-255
-				pp   - hex encoded p in 1-255
-				salt - base64 encoded salt 1-16 bytes decoded
-				hash - base64 encoded 64-byte scrypt hash
+		$s1$NNrrpp$salt$hash
+			NN   - hex encoded cost factor (i.e. log2(N) ) (two hex digits)
+			rr   - hex encoded r in 1-255
+			pp   - hex encoded p in 1-255
+			salt - base64 encoded salt 1-16 bytes decoded
+			hash - base64 encoded 64-byte scrypt hash
 
-		For example.
-			Password: "correct horse battery staple"
-			Hash: "$s1$0E0801$G34Rvmk2DSkp9sFJyyM49O$z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e"
+	For example.
+		Password: "correct horse battery staple"
+		Hash: "$s1$0E0801$G34Rvmk2DSkp9sFJyyM49O$z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e"
 
-					CostFactor: 0x0E (14), Cost=2^14 = 16384
-					BlockSizeFacdtor: 0x08, BlockSize = 128 * 8 = 1,024 bytes
-					Parallelization Factor: 0x1
-					Salt (base64): G34Rvmk2DSkp9sFJyyM49O
-					Password (base64): z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e
+				CostFactor: 0x0E (14), Cost=2^14 = 16384
+				BlockSizeFacdtor: 0x08, BlockSize = 128 * 8 = 1,024 bytes
+				Parallelization Factor: 0x1
+				Salt (base64): G34Rvmk2DSkp9sFJyyM49O
+				Password (base64): z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e
+
+	Background
+	===========
+
+	Someone already decided on a standard string way to represent scrypt passwords.
+		https://github.com/wg/scrypt
+
+	We'll gravitate to any existing standard we can find
+
+		$s0$params$salt$key
+			s0     - version 0 of the format with 128-bit salt and 256-bit derived key
+			params - 32-bit hex integer containing log2(N) (16 bits), r (8 bits), and p (8 bits)
+			salt   - base64-encoded salt
+			key    - base64-encoded derived key
+
+	Example:
+
+		$s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=
+
+			passwd = "secret"
+			N = 16384
+			r = 8
+			p = 1
+
+	There is another standard out there, published by the guy who authored the rfc.
+
+	Unix crypt using scrypt
+		https://gitorious.org/scrypt/ietf-scrypt/raw/7c4a7c47d32a5dbfd43b1223e4b9ac38bfe6f8a0:unix-scrypt.txt
+
+		> This document specify a new Unix crypt method based on the scrypt
+		> password-based key derivation function.  It uses the
+
+		$<ID>$<SALT>$<PWD>
+
+		convention introduced with the old MD5-based solution and also used by
+		the more recent SHA-256/SHA-512 mechanism specified here:
+
+			http://www.akkadia.org/drepper/sha-crypt.html
+
+		The scrypt method uses the following value:
+
+		           ID       |    Method
+		        -------------------------------
+		           7        |    scrypt
+
+		      The scrypt method requires three parameters in the SALT value: N, r
+		      and p which are expressed like this:
+
+		        N=<N>,r=<r>,p=<p>$
+
+		      where N, r and p are unsigned decimal numbers that are used as the
+		      scrypt parameters.
+
+		      The PWD part is the password string, and the size is fixed to 86
+		      characters which corresponds to 64 bytes base64 encoded.
+
+		      To compute the PWD part, run the scrypt algorithm with the password,
+		      salt, parameters to generate 64 bytes and base64 encode it.
+
+	And then theres:
+		https://github.com/jvarho/pylibscrypt/blob/master/pylibscrypt/mcf.py
+
+		Modular Crypt Format support for scrypt
+
+		Compatible with libscrypt scrypt_mcf_check also supports the $7$ format.
+
+	Which is the format i chose
 	}
 	scrypt := TScrypt.Create;
 	try
@@ -1611,7 +1697,7 @@ begin
 		x[ 9] := x[ 9] xor LRot32(x[ 8]+x[11],13);  x[10] := x[10] xor LRot32(x[ 9]+x[ 8],18);
 		x[12] := x[12] xor LRot32(x[15]+x[14], 7);  x[13] := x[13] xor LRot32(x[12]+x[15], 9);
 		x[14] := x[14] xor LRot32(x[13]+x[12],13);  x[15] := x[15] xor LRot32(x[14]+x[13],18);
-   end;
+	end;
 
 	//Result ← Input + X;
 	SetLength(Result, 64); //64 bytes
@@ -2352,7 +2438,7 @@ begin
 	//Move(FHashBuffer[0], W[0], SizeOf(FHashBuffer) );
 	for t := 0 to 15 do
 	begin
-   	W[t] := ByteSwap(PLongWord(@FHashBuffer[t*4])^);
+		W[t] := ByteSwap(PLongWord(@FHashBuffer[t*4])^);
 //		W[tCount] := ByteSwap(W[tCount]);
 	end;
 
@@ -2637,7 +2723,7 @@ begin
 	try
 		if not CryptDestroyHash(FHash) then
 		begin
-	     	le := GetLastError;
+			le := GetLastError;
 			RaiseOSError(le, Format('Could not destroy current hash provider: %s (%d)', [SysErrorMessage(le), le]));
 			Exit;
 		end;
@@ -2694,7 +2780,7 @@ begin
 		FProvider := 0;
 	end;
 
-  inherited;
+	inherited;
 end;
 
 function TCspHash.Finalize: TBytes;
@@ -2751,7 +2837,7 @@ begin
 	begin
 		le := GetLastError;
 		raise Exception.CreateFmt('Could not get Hash value from CSP: %s (%d)', [SysErrorMessage(le), le]);
-   end;
+	end;
 end;
 
 procedure TCspHash.Initialize;
@@ -2959,7 +3045,7 @@ var
 		Result := GetProcAddress(moduleHandle, PWideChar(procedureName));
 		if Result = nil then
 			FunctionFound := False;
-   end;
+	end;
 const
 	BCrypt = 'BCrypt.dll';
 begin

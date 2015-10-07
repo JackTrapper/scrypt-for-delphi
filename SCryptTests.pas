@@ -594,7 +594,7 @@ var
 			t2 := t2-t1;
 			if (bestTime = 0) or (t2 < bestTime) then
 				bestTime := t2;
-      end;
+		end;
 
 		Status(Format('%s		%.3f MB/s', [HashAlgorithmName, (Length(data)/1024/1024) / (bestTime/FFreq)]));
 	end;
@@ -662,7 +662,7 @@ begin
 		t2 := GetTimestamp;
 		if (((t2-t1) < best) or (best = 0)) then
 			best := (t2-t1);
-   end;
+	end;
 	OutputDebugString('SAMPLING OFF');
 
 	Status(Format('%s: %.3f MB/s', ['SHA256', (Length(data)/1024/1024) / (best/FFreq)]));
@@ -1303,7 +1303,7 @@ const
 			t2 := t2-t1;
 			if (bestTime = 0) or (t2 < bestTime) then
 				bestTime := t2;
-      end;
+		end;
 
 		Status(Format('%s	%.3f MB/s', [HmacAlgorithmName, (Length(data)/1024/1024) / (bestTime/FFreq)]));
 	end;
@@ -1349,7 +1349,7 @@ const
 			t2 := t2-t1;
 			if (bestTime = 0) or (t2 < bestTime) then
 				bestTime := t2;
-      end;
+		end;
 
 		Status(Format('%s	%.3f us', [HmacAlgorithmName, (bestTime/FFreq*1000000)]));
 	end;
