@@ -15,6 +15,8 @@ type
 
 		function GetTimestamp: Int64;
 
+		class function StringToUtf8Bytes(const s: UnicodeString): TBytes;
+
 		procedure Tester_HMAC_SHA1(HMACsha1: IHmacAlgorithm);
 		procedure Tester_HMAC_SHA256(HMACsha256: IHmacAlgorithm);
 		procedure Tester_PBKDF2_SHA1(Pbkdf: IPBKDF2Algorithm);
@@ -22,23 +24,26 @@ type
 
 		procedure Test_Scrypt_PasswordFormatting; //todo
 	public
+		procedure Benchmark_SHA1_PurePascal; //because native code should be fast
+		procedure Benchmark_SHA256_PurePascal;
+		procedure Benchmark_Hashes; //Compares SHA1 pure, Csp, Cng, SHA256 pure, Csp, Cng
+		procedure Benchmark_HMACs;
+		procedure Benchmark_PBKDF2s;
+		procedure ScryptBenchmarks; //Duration for different cost factor (N) and block size factor (r)
 	published
 		//Even though we don't use SHA-1, we implemented it because PBKDF2_SHA1 is the only one with published test vectors
 		procedure Test_SHA1;
 		procedure Test_SHA1_PurePascal;
-		procedure Benchmark_SHA1_PurePascal; //because native code should be fast
 		procedure Test_SHA1_Csp;
 		procedure Test_SHA1_Cng;
 
-		//Scrypt uses PBKDF2_SHA256
+		//Scrypt uses PBKDF2_SHA256. We fallback through Cng -> Csp -> PurePascal
 		procedure Test_SHA256;
 		procedure Test_SHA256_PurePascal;
-		procedure Benchmark_SHA256_PurePascal;
 		procedure Test_SHA256_Csp;
 		procedure Test_SHA256_Cng;
 
-		procedure BenchmarkHashes;
-
+		//PBKDF2 uses HMAC. Test our implementation with known SHA1 and SHA256 test vectors
 		procedure Test_HMAC_SHA1;
 		procedure Test_HMAC_SHA1_PurePascal;
 		procedure Test_HMAC_SHA1_Cng;
@@ -47,8 +52,7 @@ type
 		procedure Test_HMAC_SHA256_PurePascal;
 		procedure Test_HMAC_SHA256_Cng;
 
-		procedure Benchmark_HMACs;
-
+		//Test PBKDF implementations; test with known SHA1 and SHA256 test vectors
 		procedure Test_PBKDF2_SHA1;
 		procedure Test_PBKDF2_SHA1_PurePascal;
 		procedure Test_PBKDF2_SHA1_Cng;
@@ -57,17 +61,12 @@ type
 		procedure Test_PBKDF2_SHA256_PurePascal;
 		procedure Test_PBKDF2_SHA256_Cng;
 
-		procedure Benchmark_PBKDF2s;
-
+		//Salsa 20/8, BlockMix, and ROMix are the heart of scrypt. PBKDF2 is for key derivation. These are used for expensive salt
 		procedure Test_Salsa208Core;
 		procedure Test_BlockMix;
 		procedure Test_ROMix;
-		procedure Test_Scrypt;
-		procedure Test_PasswordHashing;
-
-		procedure Test_PasswordHashPerformance;
-
-		procedure ScryptBenchmarks;
+		procedure Test_Scrypt; //official scrypt test vectors
+		procedure Test_PasswordHashing; //Test, and verify, "correct horse battery staple"
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -105,13 +104,16 @@ type
    end;
 
 	TScryptCracker = class(TScrypt)
-   public
-   end;
+	public
+	end;
 
 implementation
 
 uses
 	Windows;
+
+type
+	RawByteString = AnsiString;
 
 function HexToBytes(s: string): TBytes;
 var
@@ -166,11 +168,11 @@ const
 var
 	Digest: TBytes;
 	TestData: TBytes;
-	szInData: Utf8String;
+	szInData: RawByteString;
 begin
 	{This is the test data from FIPS-180 Appendix A}
 	szInData := 'abc';
-	testData := BytesOf(szInData);
+	testData := TScryptTests.StringToUtf8Bytes(szInData);
 
 	FSha1.HashData(testData[0], Length(testData));
 	Digest := FSha1.Finalize;
@@ -190,11 +192,11 @@ const
 var
 	digest: TBytes;
 	testData: TBytes;
-	szInData: Utf8String;
+	szInData: RawByteString;
 begin
 	{This is the test data from FIPS-180 Appendix B}
 	szInData := 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq';
-	testData := BytesOf(szInData);
+	testData := TScryptTests.StringToUtf8Bytes(szInData);
 
 	FSha1.HashData(TestData[0], Length(TestData));
 	digest := FSha1.Finalize;
@@ -329,6 +331,39 @@ begin
 	inherited;
 end;
 
+class function TScryptTests.StringToUtf8Bytes(const s: UnicodeString): TBytes;
+var
+	strLen: Integer;
+	dw: DWORD;
+begin
+	strLen := Length(s);
+
+	if strLen = 0 then
+	begin
+		SetLength(Result, 0);
+		Exit;
+	end;
+
+	// Determine real size of destination string, in bytes
+	strLen := WideCharToMultiByte(CP_UTF8, 0, PWideChar(s), Length(s), nil, 0, nil, nil);
+	if strLen = 0 then
+	begin
+		dw := GetLastError;
+		raise EConvertError.Create('Could not get length of destination string. Error '+IntToStr(dw)+' ('+SysErrorMessage(dw)+')');
+	end;
+
+	// Allocate memory for destination string
+	SetLength(Result, strLen);
+
+	// Convert source UTF-16 string (UnicodeString) to the destination using the code-page
+	strLen := WideCharToMultiByte(CP_UTF8, 0, PWideChar(s), Length(s), PAnsiChar(@Result[0]), strLen, nil, nil);
+	if strLen = 0 then
+	begin
+		dw := GetLastError;
+		raise EConvertError.Create('Could not convert utf16 to utf8 string. Error '+IntToStr(dw)+' ('+SysErrorMessage(dw)+')');
+	end;
+end;
+
 { TSHA256Tester }
 
 function TSHA256Tester.StringOfString(const s: string; Count: Integer): string;
@@ -398,7 +433,7 @@ var
    digest: TBytes;
    expectedBytes: TBytes;
 begin
-   utf8Data := TEncoding.UTF8.GetBytes(s);
+   utf8Data := TScryptTests.StringToUtf8Bytes(s);
    expectedBytes := HexStringToBytes(expectedHash);
 
 	FSHA256.HashData(utf8Data[0], Length(utf8Data));
@@ -569,7 +604,7 @@ begin
 	t('The quick brown fox jumps over the lazy dog', 'd7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592');
 end;
 
-procedure TScryptTests.BenchmarkHashes;
+procedure TScryptTests.Benchmark_Hashes;
 var
 	data: TBytes;
 
@@ -584,8 +619,8 @@ var
 
 		bestTime := 0;
 
-		//Fastest time of 30 runs
-		for i := 1 to 30 do
+		//Fastest time of 5 runs
+		for i := 1 to 5 do
 		begin
 			t1 := GetTimestamp;
 			hash.HashData(data[0], Length(data));
@@ -594,7 +629,7 @@ var
 			t2 := t2-t1;
 			if (bestTime = 0) or (t2 < bestTime) then
 				bestTime := t2;
-      end;
+		end;
 
 		Status(Format('%s		%.3f MB/s', [HashAlgorithmName, (Length(data)/1024/1024) / (bestTime/FFreq)]));
 	end;
@@ -662,7 +697,7 @@ begin
 		t2 := GetTimestamp;
 		if (((t2-t1) < best) or (best = 0)) then
 			best := (t2-t1);
-   end;
+	end;
 	OutputDebugString('SAMPLING OFF');
 
 	Status(Format('%s: %.3f MB/s', ['SHA256', (Length(data)/1024/1024) / (best/FFreq)]));
@@ -1136,39 +1171,30 @@ begin
 			'a1 d4 25 a1 22 58 33 54 9a db 84 1b 51 c9 b3 17 6a 27 2b de bb a1 d0 78 47 8f 62 b3 97 f3 3c 8d');
 end;
 
-procedure TScryptTests.Test_PasswordHashPerformance;
-var
-	s: string;
-	freq, t1, t2: Int64;
-begin
-	if not QueryPerformanceFrequency(freq) then freq := -1;
-
-	if not QueryPerformanceCounter(t1) then t1 := 0;
-	s := TScrypt.HashPassword('correct horse battery staple');
-	if not QueryPerformanceCounter(t2) then t2 := 0;
-
-	Status(Format('Time to hash password: %.3f ms', [(t2-t1)/freq*1000]));
-
-	Self.CheckFalse(s='');
-
-	if not QueryPerformanceCounter(t1) then t1 := 0;
-	Self.CheckTrue(TScrypt.CheckPassword('correct horse battery staple', s));
-	if not QueryPerformanceCounter(t2) then t2 := 0;
-	Status(Format('Time to verify password: %.3f ms', [(t2-t1)/freq*1000]));
-end;
-
 procedure TScryptTests.Test_PasswordHashing;
 var
 	password: string;
 	hash: string;
+	freq, t1, t2: Int64;
 begin
+	if not QueryPerformanceFrequency(freq) then freq := -1;
+
 	password := 'correct horse battery staple';
 
-	Status('Password: "'+password+'"');
+	if not QueryPerformanceCounter(t1) then t1 := 0;
 	hash := TScrypt.HashPassword(password);
+	if not QueryPerformanceCounter(t2) then t2 := 0;
 
+	Status('Password: "'+password+'"');
 	Status('Hash: "'+hash+'"');
-	CheckTrue(TScrypt.CheckPassword(password, hash));
+	Status(Format('Time to hash password: %.5f ms', [(t2-t1)/freq*1000]));
+
+	Self.CheckFalse(hash='');
+
+	if not QueryPerformanceCounter(t1) then t1 := 0;
+	Self.CheckTrue(TScrypt.CheckPassword('correct horse battery staple', hash));
+	if not QueryPerformanceCounter(t2) then t2 := 0;
+	Status(Format('Time to verify password: %.5f ms', [(t2-t1)/freq*1000]));
 end;
 
 procedure TScryptTests.Tester_PBKDF2_SHA1(Pbkdf: IPBKDF2Algorithm);
@@ -1293,8 +1319,8 @@ const
 
 		bestTime := 0;
 
-		//Fastest time of 30 runs
-		for i := 1 to 30 do
+		//Fastest time of 5 runs
+		for i := 1 to 5 do
 		begin
 			t1 := GetTimestamp;
 			hmac.HashData(password[1], Length(password), data[0], Length(data));
@@ -1303,7 +1329,7 @@ const
 			t2 := t2-t1;
 			if (bestTime = 0) or (t2 < bestTime) then
 				bestTime := t2;
-      end;
+		end;
 
 		Status(Format('%s	%.3f MB/s', [HmacAlgorithmName, (Length(data)/1024/1024) / (bestTime/FFreq)]));
 	end;
@@ -1339,8 +1365,8 @@ const
 
 		bestTime := 0;
 
-		//Fastest time of 30 runs
-		for i := 1 to 30 do
+		//Fastest time of 5 runs
+		for i := 1 to 5 do
 		begin
 			t1 := GetTimestamp;
 			db.GetBytes(password, salt[1], Length(salt), 1000, 32);
@@ -1349,12 +1375,12 @@ const
 			t2 := t2-t1;
 			if (bestTime = 0) or (t2 < bestTime) then
 				bestTime := t2;
-      end;
+		end;
 
-		Status(Format('%s	%.3f us', [HmacAlgorithmName, (bestTime/FFreq*1000000)]));
+		Status(Format('%s	%.5f ms', [HmacAlgorithmName, (bestTime/FFreq*1000)]));
 	end;
 begin
-	Status(Format('%s	%s', ['Algorithm', 'Speed (us)']));
+	Status(Format('%s	%s', ['Algorithm', 'Speed (ms)']));
 
 	Test('PBKDF2.SHA1');
 	Test('PBKDF2.SHA1.PurePascal');
@@ -1662,12 +1688,17 @@ begin
 			'70 23 bd cb 3a fd 73 48 46 1c 06 cd 81 fd 38 eb fd a8 fb ba 90 4f 8e 3e a9 b5 43 f6 54 5d a1 f2'+
 			'd5 43 29 55 61 3f 0f cf 62 d4 97 05 24 2a 9a f9 e6 1e 85 dc 0d 65 1e 40 df cf 01 7b 45 57 58 87');
 
-	OutputDebugString('SAMPLING ON');
-	//uses 1 GB
-	test('pleaseletmein', 'SodiumChloride', {N=1048576=2^}20, {r=}8, {p=}1, 64,
-			'21 01 cb 9b 6a 51 1a ae ad db be 09 cf 70 f8 81 ec 56 8d 57 4a 2f fd 4d ab e5 ee 98 20 ad aa 47'+
-			'8e 56 fd 8f 4b a5 d0 9f fa 1c 6d 92 7c 40 f4 c3 37 30 40 49 e8 a9 52 fb cb f4 5c 6f a7 7a 41 a4');
-	OutputDebugString('SAMPLING OFF');
+	if FindCmdLineSwitch('IncludeSlowTests', ['-','/'], True) then
+	begin
+		OutputDebugString('SAMPLING ON');
+		//uses 1 GB
+		test('pleaseletmein', 'SodiumChloride', {N=1048576=2^}20, {r=}8, {p=}1, 64,
+				'21 01 cb 9b 6a 51 1a ae ad db be 09 cf 70 f8 81 ec 56 8d 57 4a 2f fd 4d ab e5 ee 98 20 ad aa 47'+
+				'8e 56 fd 8f 4b a5 d0 9f fa 1c 6d 92 7c 40 f4 c3 37 30 40 49 e8 a9 52 fb cb f4 5c 6f a7 7a 41 a4');
+		OutputDebugString('SAMPLING OFF');
+	end
+	else
+		Status('1 GB slow test skipped. Use -IncludeSlowTests');
 end;
 
 procedure TScryptTests.Test_SHA1_PurePascal;
