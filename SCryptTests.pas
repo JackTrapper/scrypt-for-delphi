@@ -31,6 +31,8 @@ type
 		procedure Benchmark_PBKDF2s;
 		procedure ScryptBenchmarks; //Duration for different cost factor (N) and block size factor (r)
 	published
+		procedure Test_Base64;
+
 		//Even though we don't use SHA-1, we implemented it because PBKDF2_SHA1 is the only one with published test vectors
 		procedure Test_SHA1;
 		procedure Test_SHA1_PurePascal;
@@ -66,7 +68,10 @@ type
 		procedure Test_BlockMix;
 		procedure Test_ROMix;
 		procedure Test_Scrypt; //official scrypt test vectors
+
+		//Password hashing
 		procedure Test_PasswordHashing; //Test, and verify, "correct horse battery staple"
+		procedure Test_JavaWgScrypt; //the only other example out there
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -111,9 +116,6 @@ implementation
 
 uses
 	Windows;
-
-type
-	RawByteString = AnsiString;
 
 function HexToBytes(s: string): TBytes;
 var
@@ -166,9 +168,9 @@ const
 		 $78, $50, $C2, $6C,
 		 $9C, $D0, $D8, $9D);
 var
-	Digest: TBytes;
-	TestData: TBytes;
-	szInData: RawByteString;
+	szInData: UnicodeString;
+	testData: TBytes;
+	digest: TBytes;
 begin
 	{This is the test data from FIPS-180 Appendix A}
 	szInData := 'abc';
@@ -190,9 +192,9 @@ const
 		 $F9, $51, $29, $E5,
 		 $E5, $46, $70, $F1);
 var
-	digest: TBytes;
+	szInData: UnicodeString;
 	testData: TBytes;
-	szInData: RawByteString;
+	digest: TBytes;
 begin
 	{This is the test data from FIPS-180 Appendix B}
 	szInData := 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq';
@@ -364,6 +366,78 @@ begin
 	end;
 end;
 
+procedure TScryptTests.Test_JavaWgScrypt;
+begin
+	{
+		From: https://github.com/wg/scrypt
+
+		Passwd = "secret"
+			N = 16384
+			r = 8
+			p = 1
+
+
+	}
+	TScrypt.CheckPassword('secret', '$s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=');
+
+end;
+
+procedure TScryptTests.Test_Base64;
+var
+	buffer, bufferActual: TBytes;
+
+	function BASE64(s: AnsiString): string;
+	var
+		b: TBytes;
+	begin
+		SetLength(b, Length(s));
+		if Length(s) > 0 then
+			Move(s[1], b[0], Length(s));
+
+		Result := TScryptCracker.Base64Encode(b);
+	end;
+
+	procedure Test(Original: AnsiString; Expected: string);
+	var
+		actual: string;
+		recovered: AnsiString;
+		data: TBytes;
+	begin
+		actual := BASE64(Original);
+		CheckEquals(Expected, actual);
+
+		//Do the reverse
+		data := TScryptCracker.Base64Decode(Expected);
+		SetLength(recovered, Length(data));
+		if Length(data) > 0 then
+			Move(data[0], recovered[1], Length(data));
+		CheckEquals(Original, recovered);
+	end;
+begin
+	{
+		From RFC4648 - The Base16, Base32, and Base64 Data Encodings
+		https://tools.ietf.org/html/rfc4648#section-10
+	}
+	Test('',  '');
+	Test('f', 'Zg==');
+	Test('fo', 'Zm8=');
+	Test('foo', 'Zm9v');
+	Test('foob', 'Zm9vYg==');
+	Test('fooba', 'Zm9vYmE=');
+	Test('foobar', 'Zm9vYmFy');
+
+	{
+		From the wg/scrypt example
+		epIxT/h6HbbwHaehFnh/bw== ==> 122 146 49 79 248 122 29 182 240 29 167 161 22 120 127 111
+	}
+	buffer := HexToBytes('7a 92 31 4f f8 7a 1d b6 f0 1d a7 a1 16 78 7f 6f');
+	CheckEquals('epIxT/h6HbbwHaehFnh/bw==', TScryptCracker.Base64Encode(buffer));
+
+	bufferActual := TScryptCracker.Base64Decode('epIxT/h6HbbwHaehFnh/bw==');
+	CheckEquals(Length(buffer), Length(bufferActual));
+	CheckEqualsMem(@buffer[0], @bufferActual[0], Length(bufferActual));
+end;
+
 { TSHA256Tester }
 
 function TSHA256Tester.StringOfString(const s: string; Count: Integer): string;
@@ -433,14 +507,14 @@ var
    digest: TBytes;
    expectedBytes: TBytes;
 begin
-   utf8Data := TScryptTests.StringToUtf8Bytes(s);
-   expectedBytes := HexStringToBytes(expectedHash);
+	utf8Data := TScryptTests.StringToUtf8Bytes(s);
+	expectedBytes := HexStringToBytes(expectedHash);
 
-	FSHA256.HashData(utf8Data[0], Length(utf8Data));
-   digest := FSHA256.Finalize;
+	FSHA256.HashData(Pointer(utf8Data)^, Length(utf8Data));
+	digest := FSHA256.Finalize;
 
 	if not CompareMem(@digest[0], @expectedBytes[0], Length(expectedBytes)) then
-      raise EScryptException.Create('SHA2-256 hash failed');
+		raise EScryptException.Create('SHA2-256 hash failed');
 end;
 
 procedure TSHA256Tester.OfficialVectors;
@@ -1177,6 +1251,9 @@ var
 	hash: string;
 	freq, t1, t2: Int64;
 begin
+	{
+		Test round trip of generating a hash, and then verifying it
+	}
 	if not QueryPerformanceFrequency(freq) then freq := -1;
 
 	password := 'correct horse battery staple';
@@ -1187,14 +1264,14 @@ begin
 
 	Status('Password: "'+password+'"');
 	Status('Hash: "'+hash+'"');
-	Status(Format('Time to hash password: %.5f ms', [(t2-t1)/freq*1000]));
+	Status(Format('Time to hash password: %.4f ms', [(t2-t1)/freq*1000]));
 
 	Self.CheckFalse(hash='');
 
 	if not QueryPerformanceCounter(t1) then t1 := 0;
 	Self.CheckTrue(TScrypt.CheckPassword('correct horse battery staple', hash));
 	if not QueryPerformanceCounter(t2) then t2 := 0;
-	Status(Format('Time to verify password: %.5f ms', [(t2-t1)/freq*1000]));
+	Status(Format('Time to verify password: %.4f ms', [(t2-t1)/freq*1000]));
 end;
 
 procedure TScryptTests.Tester_PBKDF2_SHA1(Pbkdf: IPBKDF2Algorithm);
@@ -1210,7 +1287,7 @@ procedure TScryptTests.Tester_PBKDF2_SHA1(Pbkdf: IPBKDF2Algorithm);
 		derivedKey := Pbkdf.GetBytes(Password, Salt[1], Length(Salt), IterationCount, DerivedKeyLength);
 		t2 := Self.GetTimestamp;
 
-		s := Format('%.3f ms', [(t2-t1)/FFreq*1000]);
+		s := Format('%.4f ms', [(t2-t1)/FFreq*1000]);
 		Status(s);
 
 		if (DerivedKeyLength <> Length(derivedKey)) then
@@ -1377,7 +1454,7 @@ const
 				bestTime := t2;
 		end;
 
-		Status(Format('%s	%.5f ms', [HmacAlgorithmName, (bestTime/FFreq*1000)]));
+		Status(Format('%s	%.4f ms', [HmacAlgorithmName, (bestTime/FFreq*1000)]));
 	end;
 begin
 	Status(Format('%s	%s', ['Algorithm', 'Speed (ms)']));
@@ -1397,9 +1474,8 @@ type
 	TLongWordArray = array[0..15] of LongWord;
 	PLongWordArray = ^TLongWordArray;
 var
-	inData: TBytes;
-	expected: TBytes;
 	actual: TBytes;
+	expected: TBytes;
 begin
 {
 	https://tools.ietf.org/html/draft-josefsson-scrypt-kdf-02#section-7
@@ -1423,11 +1499,13 @@ begin
    b4 39 31 68 e3 c9 e6 bc fe 6b c5 b7 a0 6d 96 ba
    e4 24 cc 10 2c 91 74 5c 24 ad 67 3d c7 61 8f 81
 }
-	inData := HexToBytes(
+	actual := HexToBytes(
 			'7e 87 9a 21 4f 3e c9 86 7c a9 40 e6 41 71 8f 26 '+
 			'ba ee 55 5b 8c 61 c1 b5 0d f8 46 11 6d cd 3b 1d '+
 			'ee 24 f3 19 df 9b 3d 85 14 12 1e 4b 5a c5 aa 32 '+
 			'76 02 1d 29 09 c7 48 29 ed eb c6 8d b8 b8 c2 5e ');
+
+	TScryptCracker(FScrypt).Salsa20InPlace(actual[0]);
 
 
 	expected := HexToBytes(
@@ -1437,16 +1515,8 @@ begin
 			'e4 24 cc 10 2c 91 74 5c 24 ad 67 3d c7 61 8f 81 ');
 
 
-	actual := TScryptCracker(FScrypt).Salsa20(inData[0]);
-
 	Self.CheckEquals(Length(expected), Length(actual), 'Salsa20/8 array length');
 	Self.CheckEqualsMem(@expected[0], @actual[0], Length(expected), 'Salsa20/8 data failed');
-
-	//Check the in-place version
-	TScryptCracker(FScrypt).Salsa20InPlace(inData[0]);
-
-	Self.CheckEquals(Length(expected), Length(inData), 'Salsa20/8 in-place array length');
-	Self.CheckEqualsMem(@expected[0], @inData[0], Length(expected), 'Salsa20/8 in-place data failed');
 end;
 
 procedure TScryptTests.Test_Scrypt_PasswordFormatting;
@@ -1651,7 +1721,7 @@ var
 		actual := FScrypt.GetBytes(password, salt, CostFactor, r, p, DesiredBytes);
 		QueryPerformanceCounter(t2);
 
-		Self.Status(Format('Test "%s" duration: %.3f ms', [password, (t2-t1)/freq*1000]));
+		Self.Status(Format('Test "%s" duration: %.4f ms', [password, (t2-t1)/freq*1000]));
 
 		if Length(expected) <> Length(actual) then
 			raise EScryptException.CreateFmt('Self-test failed: actual length (%d) does not match expected (%d)', [Length(actual), Length(expected)]);

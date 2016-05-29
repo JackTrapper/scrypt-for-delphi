@@ -4,8 +4,17 @@
 	Sample Usage
 	============
 
+		//Hash a password
+		hash := TSCrypt.HashPassword('correct horse battery staple');
+
+		//Check if password matches previous hash
+		isValid := TScrypt.CheckPassword('correct horse battery staple', hash);
+
+		//Derive an encryption key from a password
 		secretKey := TScrypt.GetBytes('correct horse battery staple', 'seasalt', 16); //returns 16 bytes (128 bits)
-		secretKey := TScrypt.GetBytes('correct horse battery staple', 'seasalt', {r}1, {N}128}, {p}8, 32); //returns 32 bytes (256 bits)
+		secretKey := TScrypt.GetBytes('correct horse battery staple', 'seasalt', {r=}1, {N=}128}, {p=}8, 32); //returns 32 bytes (256 bits)
+
+
 
 	Remarks
 	=======
@@ -13,20 +22,20 @@
 	scrypt is a key-derivation function.
 	Key derivation functions are used to derive an encryption key from a password.
 
-	To generate 16 bytes (128 bits) of key material, using scrypt determined parameters use:
+	To generate 16 bytes (128 bits) of key material, with automatically determined parameters, use:
 
 		secretKey := TScrypt.GetBytes('correct horse battery staple', 'seasalt', 16); //returns 16 bytes (128 bits)
 
-	If you know what values of the scrypt N (CostFactor), r (block size), and p (parallelization factor)  parameters you want,
+	If you know what values of the scrypt N (CostFactor), r (block size), and p (parallelization factor) parameters you want,
 	you can specify them:
 
 			secretKey := TScrypt.GetBytes('correct horse battery staple', 'seasalt', {N=}14, {r=}8, {p=}1, 32); //returns 32 bytes (256 bits)
 
 	where
-			BlockSize (r) = 8
-			CostFactor (N) = 14 (i.e. 2^14 = 16,384 iterations)
+			BlockSize (r)             = 8
+			CostFactor (N)            = 14 (i.e. 2^14 = 16,384 iterations)
 			ParallelizationFactor (p) = 1
-			DesiredBytes = 32 (256 bits)
+			DesiredBytes              = 32 (256 bits)
 
 	Otherwise scrypt does a speed/memory test to determine the most appropriate parameters.
 
@@ -34,32 +43,43 @@
 	================
 
 	SCrypt has also been used as password hashing algorithm.
-	In order to make password storage easier, we will generate the salt and store it with the
-	returned string. This is similar to what OpenBSD has done with BCrypt.
+	In order to make password storage easier, we generate the salt and store it with the returned string.
+	This is similar to what OpenBSD has done with BCrypt.
 	The downside is that there is no standard format out there for SCrypt representation of password hashes.
 
-		hash := TSCrypt.HashPassword('correct horse battery staple', 'seasalt');
+		hash := TSCrypt.HashPassword('correct horse battery staple');
 
 	will return string in the format of:
 
-		$s0$params$salt$key
+		$s0$NNNNrrpp$salt$key
 
 			s0     - version 0 of the format with 128-bit salt and 256-bit derived key
 			params - 32-bit hex integer containing log2(N) (16 bits), r (8 bits), and p (8 bits)
-			salt   - base64-encoded salt
-			key    - base64-encoded derived key
+			salt   - 24 base64-encoded characters of salt (128 bits ==> 16 bytes ==> 24 characters)
+			key    - 44 base64-encoded characters derived key (256 bits ==> 32 bytes ==> 44 characters)
 
-	Example:
+	Example for password of "secret":
 
 		$s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=
 
-			passwd = "secret"
 			CostFactor = 0xE0 = 14 ==> N = 2^14 = 16,384
-			r = 0x08 = 8
-			p = 0x01 = 1
+			r          = 0x08 = 8
+			p          = 0x01 = 1
+			salt       = epIxT/h6HbbwHaehFnh/bw==
+			key        = 7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=
 
 	Version History
 	===============
+
+	Version 1.4   20160528
+			- Switched password hashing Base64 to use standard Base64 rather than OpenBSD's custom Base64 that BCrypt uses
+			- Hashing now compatible with wg/scrypt (added test to match their documented example)
+			- Standard base64 hashing keeps trailing == padding (BCrypt's custom Base64 stripped it)
+			- Removed unused variant of Salsa20 - the in-place is the only one used
+			- tried to make scrypt work on non-MSWINDOWS (e.g. use of ComObj and ActiveX for bestcrypt and capi)
+			- moved CreateObject to public rather than protected (no longer need cracker class to get at it).
+			  It exists so people can use it; but i'm not sure how i feel about it being truly public.
+			- Fixed range-check bug when passing empty salt to PBKDF2
 
 	Version 1.3   20160509
 			- made compatible with Delphi 5/7
@@ -116,10 +136,14 @@
 		| 20 | #N/A | 4006.3 | 5673.7 | 7117.5 | 8781.7 | 9939.3 | 12146.8 | 13136.7 | 14539.6 | 16785.1 |   #mem |   #mem |    #mem |    #mem |    #mem |    #N/A |
 
 	Delphi is limited to allocating $7FFFFFFF bytes when using GetMem or SetLength.
+	(GetMem and SetLength are defined as taking a 32-bit integer, even in 64-bit applications)
+
 	This means that N=20,r=16 requires 128*16*2^20 = 0x80000000 bytes of memory.
-	This exceeds the amount you can ask for in an 32-bit Integer. (GetMem and SetLength are defined as taking a 32-bit integer, even in 64-bit applications)
-	In practice, your limit in a 32-bit process will be lower, given the 2GB limit of virtual address space, and that there are
-	other things already in your address space (e.g. the application, dlls).
+
+	This exceeds the amount you can ask for in an 32-bit Integer.
+
+	In practice, your limit in a 32-bit process will be lower, given the 2GB limit of virtual address space,
+	and that there are other things already in your address space (e.g. your application, dlls).
 
 
 	References
@@ -134,23 +158,41 @@
 		https://github.com/barrysteyn/node-scrypt
 *)
 
+{$IFDEF CONDITIONALEXPRESSIONS}
+	{$IF CompilerVersion >= 15} //15 = Delphi 7
+		{$DEFINE COMPILER_7_UP}
+	{$IFEND}
+	{$IF CompilerVersion = 15} //15 = Delphi 7
+		{$DEFINE COMPILER_7}
+		{$DEFINE COMPILER_7_DOWN}
+	{$IFEND}
+{$ELSE}
+	{$IFDEF VER130} //Delphi 5
+		{$DEFINE COMPILER_7_DOWN}
+		{$DEFINE COMPILER_5_DOWN}
+		{$DEFINE COMPILER_5}
+		{$DEFINE MSWINDOWS} //Delphi 5 didn't define MSWINDOWS back then. And there was no other platform
+	{$ENDIF}
+{$ENDIF}
+
 interface
 
 uses
 	SysUtils
-	{$IFDEF VER150}, Types{$ENDIF};
+	{$IFDEF COMPILER_7_UP}, Types{$ENDIF};
 
-{$IFDEF VER150} //Delphi 7
+{$IFNDEF UNICODE}
 type
-	TBytes = Types.TByteDynArray;
 	UnicodeString = WideString;
-	IInterface = IUnknown;
 {$ENDIF}
 
-{$IFDEF VER130} //Delphi 5
+{$IFDEF COMPILER_7} //Delphi 7
 type
-	TBytes = array of Byte;
-	UnicodeString = WideString;
+	TBytes = Types.TByteDynArray; //TByteDynArray wasn't added until around Delphi 7. Sometime later it moved to SysUtils.
+{$ENDIF}
+{$IFDEF COMPILER_5} //Delphi 5
+type
+	TBytes = array of Byte; //for old-fashioned Delphi 5, we have to do it ourselves
 	IInterface = IUnknown;
 	TStringDynArray = array of String;
 	EOSError = EWin32Error;
@@ -194,9 +236,6 @@ type
 		class function Base64Encode(const data: array of Byte): string;
 		class function Base64Decode(const s: string): TBytes;
 
-		class function BsdBase64Encode(const data: array of Byte): string;
-		class function BsdBase64Decode(const s: string): TBytes;
-
 		class function Tokenize(const s: string; Delimiter: Char): TStringDynArray;
 		function GenerateSalt: TBytes;
 
@@ -204,9 +243,7 @@ type
 
 		function PBKDF2(const Password: UnicodeString; const Salt; const SaltLength: Integer; IterationCount, DesiredBytes: Integer): TBytes;
 
-
-		function Salsa20(const Input): TBytes; //four round version of Salsa20, termed Salsa20/8
-		procedure Salsa20InPlace(var Input);
+		procedure Salsa20InPlace(var Input); //four round version of Salsa20, termed Salsa20/8
 		function BlockMix(const B: array of Byte): TBytes; //mixes r 128-byte blocks
 		function ROMix(const B; BlockSize, CostFactor: Cardinal): TBytes;
 
@@ -216,12 +253,6 @@ type
 		procedure GetDefaultParameters(out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal);
 		function TryParseHashString(HashString: string; out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; out Salt: TBytes; out Data: TBytes): Boolean;
 		function FormatPasswordHash(const costFactor, blockSizeFactor, parallelizationFactor: Integer; const Salt, DerivedBytes: array of Byte): string;
-
-		{
-			Let people have access to our hash functions. They've been tested and verified, and they work well.
-			Besides, we have HMAC and PBKDF2. That's gotta be useful for someone.
-		}
-		class function CreateObject(ObjectName: string): IInterface;
 	public
 		constructor Create;
 
@@ -239,7 +270,13 @@ type
 		}
 		class function HashPassword(const Passphrase: UnicodeString): string; overload;
 		class function HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string; overload;
-		class function CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: UnicodeString): Boolean;
+		class function CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: string): Boolean;
+
+		{
+			Let people have access to our hash functions. They've been tested and verified, and they work well.
+			Besides, we have HMAC and PBKDF2. That's gotta be useful for someone.
+		}
+		class function CreateObject(ObjectName: string): IInterface;
 	end;
 
 	EScryptException = class(Exception);
@@ -255,18 +292,9 @@ implementation
 {$ENDIF}
 
 uses
-	Math,
 	{$IFDEF ScryptUnitTests}ScryptTests,{$ENDIF}
-	Windows, ComObj, ActiveX;
-
-{$IFDEF VER150} //Delphi 7
-	{$DEFINE COMPILER_7_DOWN}
-{$ENDIF}
-
-{$IFDEF VER130} //Delphi 5
-	{$DEFINE COMPILER_7_DOWN}
-{$ENDIF}
-
+	{$IFDEF MSWINDOWS}Windows, ComObj, ActiveX,{$ENDIF}
+	Math;
 
 {$IFDEF COMPILER_7_DOWN}
 function MAKELANGID(p, s: WORD): WORD;
@@ -728,10 +756,11 @@ begin
 		if (i+1) > len then
 			raise EScryptException.Create('Invalid base64 hash string');
 
-		c1 := Char64(s[i]);
-		Inc(i);
-		c2 := Char64(s[i]);
-		Inc(i);
+		c1 := Char64(s[i  ]);
+		c2 := Char64(s[i+1]);
+		c3 := Char64(s[i+2]);
+		c4 := Char64(s[i+3]);
+		Inc(i, 4);
 
 		if (c1 = -1) or (c2 = -1) then
 			raise EScryptException.Create('Invalid base64 hash string');
@@ -741,17 +770,8 @@ begin
 		// c2 = ..112222
 		Append( ((c1 and $3f) shl 2) or (c2 shr 4) );
 
-		//If there's a 3rd character, then we can use c2|c3 to form the second byte
-		if (i > len) then
-			Break;
-		c3 := Char64(s[i]);
-		Inc(i);
-
 		if (c3 = -1) then
-		begin
-			raise EScryptException.Create('Invalid base64 hash string');
-//			Break;
-		end;
+			Exit;
 
 		//Now we have the next byte in c2|c3
 		// c2 = ..112222
@@ -759,16 +779,8 @@ begin
 		Append( ((c2 and $0f) shl 4) or (c3 shr 2) );
 
 		//If there's a 4th caracter, then we can use c3|c4 to form the third byte
-		if i > len then
-			Break;
-		c4 := Char64(s[i]);
-		Inc(i);
-
 		if (c4 = -1) then
-		begin
-			raise EScryptException.Create('Invalid base64 hash string');
-//			Break;
-		end;
+			Exit;
 
 		//Now we have the next byte in c3|c4
 		// c3 = ..222233
@@ -779,18 +791,27 @@ end;
 
 class function TScrypt.Base64Encode(const data: array of Byte): string;
 
+const
+	b64: string = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
 	function EncodePacket(b1, b2, b3: Byte; Len: Integer): string;
 	begin
-		Result := '';
+		{
+			11111111 22222222 33333333
+			\____/\_____/\_____/\____/
+			  |      |      |     |
+			 c1     c2     c3    c4
+		}
+		Result := '====';
 
-		Result := Result + Base64EncodeTable[b1 shr 2];
-		Result := Result + Base64EncodeTable[((b1 and $03) shl 4) or (b2 shr 4)];
+		Result[1] := Base64EncodeTable[b1 shr 2];
+		Result[2] := Base64EncodeTable[((b1 and $03) shl 4) or (b2 shr 4)];
 		if Len < 2 then Exit;
 
-		Result := Result + Base64EncodeTable[((b2 and $0f) shl 2) or (b3 shr 6)];
+		Result[3] := Base64EncodeTable[((b2 and $0f) shl 2) or (b3 shr 6)];
 		if Len < 3 then Exit;
 
-		Result := Result + Base64EncodeTable[b3 and $3f];
+		Result[4] := Base64EncodeTable[b3 and $3f];
 	end;
 
 var
@@ -908,145 +929,6 @@ begin
 	end;
 end;
 
-class function TScrypt.BsdBase64Decode(const s: string): TBytes;
-
-	function Char64(character: Char): Integer;
-	begin
-		if (Ord(character) > Length(BsdBase64DecodeTable)) then
-		begin
-			Result := -1;
-			Exit;
-		end;
-
-		Result := BsdBase64DecodeTable[character];
-	end;
-
-	procedure Append(value: Byte);
-	var
-		i: Integer;
-	begin
-		i := Length(Result);
-		SetLength(Result, i+1);
-		Result[i] := value;
-	end;
-
-var
-	i: Integer;
-	len: Integer;
-	c1, c2, c3, c4: Integer;
-begin
-	SetLength(Result, 0);
-
-	len := Length(s);
-	i := 1;
-	while i <= len do
-	begin
-		// We'll need to have at least 2 character to form one byte.
-		// Anything less is invalid
-		if (i+1) > len then
-			raise EScryptException.Create('Invalid base64 hash string');
-
-		c1 := Char64(s[i]);
-		Inc(i);
-		c2 := Char64(s[i]);
-		Inc(i);
-
-		if (c1 = -1) or (c2 = -1) then
-			raise EScryptException.Create('Invalid base64 hash string');
-
-		//Now we have at least one byte in c1|c2
-		// c1 = ..111111
-		// c2 = ..112222
-		Append( ((c1 and $3f) shl 2) or (c2 shr 4) );
-
-		//If there's a 3rd character, then we can use c2|c3 to form the second byte
-		if (i > len) then
-			Break;
-		c3 := Char64(s[i]);
-		Inc(i);
-
-		if (c3 = -1) then
-		begin
-			raise EScryptException.Create('Invalid base64 hash string');
-//			Break;
-		end;
-
-		//Now we have the next byte in c2|c3
-		// c2 = ..112222
-		// c3 = ..222233
-		Append( ((c2 and $0f) shl 4) or (c3 shr 2) );
-
-		//If there's a 4th caracter, then we can use c3|c4 to form the third byte
-		if i > len then
-			Break;
-		c4 := Char64(s[i]);
-		Inc(i);
-
-		if (c4 = -1) then
-		begin
-			raise EScryptException.Create('Invalid base64 hash string');
-//			Break;
-		end;
-
-		//Now we have the next byte in c3|c4
-		// c3 = ..222233
-		// c4 = ..333333
-		Append( ((c3 and $03) shl 6) or c4 );
-	end;
-end;
-
-class function TScrypt.BsdBase64Encode(const data: array of Byte): string;
-
-	function EncodePacket(b1, b2, b3: Byte; Len: Integer): string;
-	begin
-		Result := '';
-
-		Result := Result + BsdBase64EncodeTable[b1 shr 2];
-		Result := Result + BsdBase64EncodeTable[((b1 and $03) shl 4) or (b2 shr 4)];
-		if Len < 2 then Exit;
-
-		Result := Result + BsdBase64EncodeTable[((b2 and $0f) shl 2) or (b3 shr 6)];
-		if Len < 3 then Exit;
-
-		Result := Result + BsdBase64EncodeTable[b3 and $3f];
-	end;
-
-var
-	i: Integer;
-	len: Integer;
-	b1, b2: Integer;
-begin
-	Result := '';
-
-	len := Length(data);
-	if len = 0 then
-		Exit;
-
-	//encode whole 3-byte chunks  TV4S 6ytw fsfv kgY8 jIuc Drjc 8deX 1s.
-	i := Low(data);
-	while len >= 3 do
-	begin
-		Result := Result+EncodePacket(data[i], data[i+1], data[i+2], 3);
-		Inc(i, 3);
-		Dec(len, 3);
-	end;
-
-	if len = 0 then
-		Exit;
-
-	//encode partial final chunk
-	Assert(len < 3);
-	if len >= 1 then
-		b1 := data[i]
-	else
-		b1 := 0;
-	if len >= 2 then
-		b2 := data[i+1]
-	else
-		b2 := 0;
-	Result := Result+EncodePacket(b1, b2, 0, len);
-end;
-
 procedure TScrypt.BurnBytes(var data: TBytes);
 begin
 	if Length(data) <= 0 then
@@ -1056,7 +938,7 @@ begin
 	SetLength(data, 0);
 end;
 
-class function TScrypt.CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: UnicodeString): Boolean;
+class function TScrypt.CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: string): Boolean;
 var
 	scrypt: TScrypt;
 	costFactor, blockSizeFactor, parallelizationFactor: Cardinal;
@@ -1099,7 +981,7 @@ begin
 	saltEx := Self.GenerateScryptSalt(Passphrase, Salt, CostFactor, BlockSizeFactor, ParallelizationFactor);
 
 	//Step 2. Use PBDKF2 with our password, but use B as the salt
-	Result := Self.PBKDF2(Passphrase, saltEx[0], Length(saltEx), 1, DesiredBytes);
+	Result := Self.PBKDF2(Passphrase, Pointer(saltEx)^, Length(saltEx), 1, DesiredBytes);
 end;
 
 function TScrypt.FormatPasswordHash(const costFactor, blockSizeFactor, parallelizationFactor: Integer; const Salt,
@@ -1141,8 +1023,8 @@ begin
 
 	Result := SCRYPT_MCF_ID+
 			'$'+IntToHex(parameters, 6)+
-			'$'+Self.BsdBase64Encode(Salt)+
-			'$'+Self.BsdBase64Encode(DerivedBytes);
+			'$'+Self.Base64Encode(Salt)+
+			'$'+Self.Base64Encode(DerivedBytes);
 end;
 
 constructor TScrypt.Create;
@@ -1166,35 +1048,35 @@ begin
 		We contain a number of hash algorithms.
 		It might be nice to let people outside us to get ahold of them.
 
-		HashAlgorithmName can be one of the following strings
+		ObjectName can be one of the following strings
 
-		| HashAlgorithmName          | Description                         | Returned Interface  |
+		| ObjectName                 | Description                         | Returned Interface  |
 		|----------------------------|-------------------------------------|---------------------|
 		| 'SHA1'                     | SHA-1, best implementation          | IHashAlgorithm      |
-		| 'SHA1.PurePascal'          | SHA-1, pure pascal                  | IHashAlgorithm      |
-		| 'SHA1.Csp'                 | SHA-1, Crypto API                   | IHashAlgorithm      |
 		| 'SHA1.Cng'                 | SHA-1, Crypto Next Gen (Cng)        | IHashAlgorithm      |
+		| 'SHA1.Csp'                 | SHA-1, Crypto API                   | IHashAlgorithm      |
+		| 'SHA1.PurePascal'          | SHA-1, pure pascal                  | IHashAlgorithm      |
 
 		| 'SHA256'                   | SHA256, best implementation         | IHashAlgorithm      |
-		| 'SHA256.PurePascal         | SHA256, pure pascal                 | IHashAlgorithm      |
-		| 'SHA256.Csp'               | SHA256, Crypto API                  | IHashAlgorithm      |
 		| 'SHA256.Cng'               | SHA256, Crypto Next Gen (Cng)       | IHashAlgorithm      |
+		| 'SHA256.Csp'               | SHA256, Crypto API                  | IHashAlgorithm      |
+		| 'SHA256.PurePascal         | SHA256, pure pascal                 | IHashAlgorithm      |
 
 		| 'HMAC.SHA1'                | HMAC-SHA1                           | IHmacAlgorithm      |
-		| 'HMAC.SHA1.PurePascal'     | HMAC-SHA1, pure pascal              | IHmacAlgorithm      |
 		| 'HMAC.SHA1.Cng'            | HMAC-SHA1, Crypto Next Gen          | IHmacAlgorithm      |
+		| 'HMAC.SHA1.PurePascal'     | HMAC-SHA1, pure pascal              | IHmacAlgorithm      |
 
 		| 'HMAC.SHA2561'             | HMAC-SHA256                         | IHmacAlgorithm      |
-		| 'HMAC.SHA256.PurePascal'   | HMAC-SHA256, pure pascal            | IHmacAlgorithm      |
 		| 'HMAC.SHA256.Cng'          | HMAC-SHA256, Crypto Next Gen        | IHmacAlgorithm      |
+		| 'HMAC.SHA256.PurePascal'   | HMAC-SHA256, pure pascal            | IHmacAlgorithm      |
 
 		| 'PBKDF2.SHA1'              | PBKDF-SHA1, best implementation     | IPBKDF2Algorithm    |
-		| 'PBKDF2.SHA1.PurePascal'   | PBKDF-SHA1, Pure pascal             | IPBKDF2Algorithm    |
 		| 'PBKDF2.SHA1.Cng'          | PBKDF-SHA1, Crypto Next Gen (Cng)   | IPBKDF2Algorithm    |
+		| 'PBKDF2.SHA1.PurePascal'   | PBKDF-SHA1, Pure pascal             | IPBKDF2Algorithm    |
 
 		| 'PBKDF2.SHA256'            | PBKDF-SHA256, best implementation   | IPBKDF2Algorithm    |
-		| 'PBKDF2.SHA256.PurePascal' | PBKDF-SHA256, Pure pascal           | IPBKDF2Algorithm    |
 		| 'PBKDF2.SHA256.Cng'        | PBKDF-SHA256, Crypto Next Gen (Cng) | IPBKDF2Algorithm    |
+		| 'PBKDF2.SHA256.PurePascal' | PBKDF-SHA256, Pure pascal           | IPBKDF2Algorithm    |
 
 	}
 	if IsAlgo('SHA1') then
@@ -1335,7 +1217,7 @@ begin
 	blockSize := 128*BlockSizeFactor;
 
 	//Step 1. Use PBKDF2 to generate the initial blocks
-	B := Self.PBKDF2(Passphrase, salt[0], Length(salt), 1, ParallelizationFactor*blockSize);
+	B := Self.PBKDF2(Passphrase, Addr(salt)^, Length(salt), 1, ParallelizationFactor*blockSize);
 
 	//Step 2. Run RoMix on each block
 	{
@@ -1632,7 +1514,8 @@ var
 	X: TBytes;
 	V: TBytes;
 	i: Cardinal;
-	j: UInt64;
+	//j: UInt64;
+	j: LongWord;
 	T: TBytes;
 const
 	SInvalidBlockLength = 'ROMix input is not multiple of 128-bytes';
@@ -1710,12 +1593,11 @@ begin
 		//j <- Integerify(X) mod N
 
 		//Convert first 8-bytes of the *last* 64-byte block of X to a UInt64, assuming little endian (Intel) format
-		j := PUInt64(@X[BlockSize-64])^; //0xE2B6E8D50510A964 = 16,336,500,699,943,709,028
-//		j := j mod N;
-		j := j and (N-1); //because N is a power of 2 (N == 2^costFactor), an optimization is simple bitmasking
+		//j := PUInt64(@X[BlockSize-64])^; //0xE2B6E8D50510A964 = 16,336,500,699,943,709,028
+		//j := j and (N-1); //because N is a power of 2 (N == 2^costFactor), an optimization is simple bitmasking
 
-//		j := PLongWord(@X[BlockSize-64])^; //0xE2B6E8D50510A964 = 16,336,500,699,943,709,028
-//		j := j and (N-1); //because N is a power of 2 (N == 2^costFactor), an optimization is simple bitmasking
+		j := PLongWord(@X[BlockSize-64])^; //0xE2B6E8D50510A964 = 16,336,500,699,943,709,028
+		j := j and (N-1); //because N is a power of 2 (N == 2^costFactor), an optimization is simple bitmasking
 
 		//T <- X xor V[j]
 		//X <- BlockMix(T)
@@ -1727,59 +1609,9 @@ begin
 	Result := X;
 end;
 
-function TScrypt.Salsa20(const Input): TBytes;
-var
-	i: Integer;
-	X: array[0..15] of LongWord;
-	inArr, outArr: PLongWordArray;
-begin
-	//X <- Input;
-	inArr := PLongWordArray(@Input);
-	for i := 0 to 15 do
-		X[i] := inArr[i]; //ByteSwap(inArr[i]);
-
-	for i := 1 to 4  do
-	begin
-		x[ 4] := x[ 4] xor LRot32(x[ 0]+x[12], 7);  x[ 8] := x[ 8] xor LRot32(x[ 4]+x[ 0], 9);
-		x[12] := x[12] xor LRot32(x[ 8]+x[ 4],13);  x[ 0] := x[ 0] xor LRot32(x[12]+x[ 8],18);
-		x[ 9] := x[ 9] xor LRot32(x[ 5]+x[ 1], 7);  x[13] := x[13] xor LRot32(x[ 9]+x[ 5], 9);
-		x[ 1] := x[ 1] xor LRot32(x[13]+x[ 9],13);  x[ 5] := x[ 5] xor LRot32(x[ 1]+x[13],18);
-		x[14] := x[14] xor LRot32(x[10]+x[ 6], 7);  x[ 2] := x[ 2] xor LRot32(x[14]+x[10], 9);
-		x[ 6] := x[ 6] xor LRot32(x[ 2]+x[14],13);  x[10] := x[10] xor LRot32(x[ 6]+x[ 2],18);
-		x[ 3] := x[ 3] xor LRot32(x[15]+x[11], 7);  x[ 7] := x[ 7] xor LRot32(x[ 3]+x[15], 9);
-		x[11] := x[11] xor LRot32(x[ 7]+x[ 3],13);  x[15] := x[15] xor LRot32(x[11]+x[ 7],18);
-		x[ 1] := x[ 1] xor LRot32(x[ 0]+x[ 3], 7);  x[ 2] := x[ 2] xor LRot32(x[ 1]+x[ 0], 9);
-		x[ 3] := x[ 3] xor LRot32(x[ 2]+x[ 1],13);  x[ 0] := x[ 0] xor LRot32(x[ 3]+x[ 2],18);
-		x[ 6] := x[ 6] xor LRot32(x[ 5]+x[ 4], 7);  x[ 7] := x[ 7] xor LRot32(x[ 6]+x[ 5], 9);
-		x[ 4] := x[ 4] xor LRot32(x[ 7]+x[ 6],13);  x[ 5] := x[ 5] xor LRot32(x[ 4]+x[ 7],18);
-		x[11] := x[11] xor LRot32(x[10]+x[ 9], 7);  x[ 8] := x[ 8] xor LRot32(x[11]+x[10], 9);
-		x[ 9] := x[ 9] xor LRot32(x[ 8]+x[11],13);  x[10] := x[10] xor LRot32(x[ 9]+x[ 8],18);
-		x[12] := x[12] xor LRot32(x[15]+x[14], 7);  x[13] := x[13] xor LRot32(x[12]+x[15], 9);
-		x[14] := x[14] xor LRot32(x[13]+x[12],13);  x[15] := x[15] xor LRot32(x[14]+x[13],18);
-	end;
-
-	//Result <- Input + X;
-	SetLength(Result, 64); //64 bytes
-	outArr := PLongWordArray(@Result[0]);
-
-	i := 0;
-	while (i <= 15) do
-	begin
-		outArr[i  ] := X[i  ] + inArr[i  ];
-		outArr[i+1] := X[i+1] + inArr[i+1];
-		outArr[i+2] := X[i+2] + inArr[i+2];
-		outArr[i+3] := X[i+3] + inArr[i+3];
-//		outArr[i  ] := ByteSwap(X[i  ] + ByteSwap(inArr[i  ]));
-//		outArr[i+1] := ByteSwap(X[i+1] + ByteSwap(inArr[i+1]));
-//		outArr[i+2] := ByteSwap(X[i+2] + ByteSwap(inArr[i+2]));
-//		outArr[i+3] := ByteSwap(X[i+3] + ByteSwap(inArr[i+3]));
-		Inc(i, 4);
-	end;
-end;
-
+{$OVERFLOWCHECKS OFF}
 procedure TScrypt.Salsa20InPlace(var Input);
 var
-//	X: PLongWordArray;
 	i: Integer;
 	Result: PLongWordArray;
 	x00, x01, x02, x03,
@@ -1918,6 +1750,7 @@ begin
 	Result[14] := Result[14] + X14;
 	Result[15] := Result[15] + X15;
 end;
+{$OVERFLOWCHECKS ON}
 
 class function TScrypt.StringToUtf8(const Source: UnicodeString): TBytes;
 var
@@ -2051,8 +1884,8 @@ begin
 		BlockSizeFactor := (parameters and $0000FF00) shr 8;
 		ParallelizationFactor := (parameters and $000000FF);
 
-		Salt := TScrypt.BsdBase64Decode(tokens[3]);
-		Data := TScrypt.BsdBase64Decode(tokens[4]);
+		Salt := TScrypt.Base64Decode(tokens[3]);
+		Data := TScrypt.Base64Decode(tokens[4]);
 
 		Result := True;
 	end
@@ -2083,8 +1916,8 @@ begin
 		BlockSizeFactor := (parameters and $0000FF00) shr 8;
 		ParallelizationFactor := (parameters and $000000FF);
 
-		Salt := TScrypt.BsdBase64Decode(tokens[3]);
-		Data := TScrypt.BsdBase64Decode(tokens[4]);
+		Salt := TScrypt.Base64Decode(tokens[3]);
+		Data := TScrypt.Base64Decode(tokens[4]);
 
 		Result := True;
 	end
@@ -3452,15 +3285,19 @@ var
 	utf8Password: TBytes;
 	hr: NTSTATUS;
 begin
-	utf8Password := TScrypt.StringToUtf8 (Password);
-
 	SetLength(Result, DesiredBytes);
 
+	utf8Password := TScrypt.StringToUtf8(Password); //needs to be before following Exit to avoid "'utf8Password' might not have been initialized" compiler bug
+
+	if DesiredBytes = 0 then
+		Exit;
+
+
 	hr := _BCryptDeriveKeyPBKDF2(FAlgorithm,
-			@utf8Password[0], Length(utf8Password),
+			Pointer(utf8Password), Length(utf8Password),
 			@Salt, SaltLength,
 			IterationCount,
-			@Result[0], Length(Result),
+			Pointer(Result), Length(Result),
 			0);
 	NTStatusCheck(hr);
 end;
