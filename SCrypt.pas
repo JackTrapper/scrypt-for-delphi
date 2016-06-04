@@ -71,6 +71,17 @@
 	Version History
 	===============
 
+	Version 1.5   20160603
+			- Change: CheckPassword to take a boolean out parameter "PasswordRehashNeeded". PasswordRehashNeeded will contain true
+			  if you should call HashPassword again while you have the user's password handy.
+			  If computing power can now compute the hash in less than 250ms, it's time to use rehash te password.
+			  Or if the scrypt version or hash string format has changed, and we want you to use HashPassword to get a new format.
+			- Added: HashPassword (the version where you let scrypt determine the parameters) will now do a mini benchmark
+			  (like Bcrypt for Delphi and canonical tarsnap scrypt does). The benchmark will try to ensure that scrypt
+			  runs in no less than 250ms (ideally 500ms). But under no circumstances will the benchmark drop below the
+			  default N=14,r=8,p=1. If the benchmark says that will take over 500ms to run, then that's the way it will be.
+			  The benchmark will only ever *increase* runtime over the default, never decrease it.
+
 	Version 1.4   20160528
 			- Switched password hashing Base64 to use standard Base64 rather than OpenBSD's custom Base64 that BCrypt uses
 			- Hashing now compatible with wg/scrypt (added test to match their documented example)
@@ -270,7 +281,7 @@ type
 		}
 		class function HashPassword(const Passphrase: UnicodeString): string; overload;
 		class function HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string; overload;
-		class function CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: string): Boolean;
+		class function CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: string; out PasswordRehashNeeded: Boolean): Boolean;
 
 		{
 			Let people have access to our hash functions. They've been tested and verified, and they work well.
@@ -676,46 +687,47 @@ const
 //	N_sensitive   = 20; //20 ==> 2^20 = 1,048,576
 	r = 8;
 	p = 1;
+var
+	t1, t2, freq: Int64;
+	duration: Real;
+	testCostFactor: Cardinal;
 begin
 	{
+		The time to run a full scrypt is linear in memory used; although CPU is slightly faster with doubled r over doubled N.
+
+		Canonical scrypt runs a benchmark with N=14, r=1 (i.e. 128*1*2^14 = 128*1*16384 = 2MB)
+		We'll do a 2MB benchmark, but using r=8, N=11    (i.e. 128*8*2^11 = 128*8* 2048 = 2MB)
+
 		The target for a normal user is 250-500 ms
-
-		|  N |  r |  Time (ms) | Memory  |
-		|----|----|------------|---------|
-		| 14 |  8 |   196.2 ms |   16 MB | <-- "normal"
-		| 14 |  9 |   258.5 ms |   18 MB |
-		| 14 | 10 |   265.8 ms |   20 MB |
-		| 14 | 11 |   309.2 ms |   22 MB |
-		| 14 | 12 |   320.2 ms |   24 MB |
-		| 14 | 13 |   326.4 ms |   26 MB |
-		| 14 | 14 |   346.1 ms |   28 MB |
-		| 14 | 15 |   381.4 ms |   30 MB |
-		| 14 | 16 |   418.9 ms |   32 MB |
-
-		| 15 |  5 |   290.0 ms |   20 MB |
-		| 15 |  6 |   331.6 ms |   24 MB |
-		| 15 |  7 |   388.5 ms |   28 MB |
-		| 15 |  8 |   427.6 ms |   32 MB |
-		| 15 |  9 |   475.1 ms |   36 MB |
-
-		| 16 |  2 |   236.3 ms |   16 MB |
-		| 16 |  3 |   337.3 ms |   24 MB |
-		| 16 |  4 |   436.7 ms |   32 MB |
-
-		| 17 |  2 |   492.6 ms |   32 MB |
-
-		| 18 |  2 |   982.1 ms |   64 MB |
-		| 19 |  2 |  1977.1 ms |  128 MB |
-		| 20 |  2 |  3972.0 ms |  256 MB |
-
-		| 20 |  8 | 12838.9 ms | 1024 MB |
 	}
 
-	BlockSizefactor := 8; //will operate on 128*8 = 1,024 byte blocks
-	CostFactor := 14; //i.e. 2^14 = 16,384 iterations, and randomly access 128*8*2^14 = 16 MB of memory during the calculation
+	CostFactor := 14; //i.e. 2^14 = 16,384 iterations
+	BlockSizefactor := 8; //will operate on 128*8 = 1,024 byte blocks, and randomly access 128*8*2^14 = 16 MB of memory during the calculation
 	ParallelizationFactor := 1;
 
-	//TODO: Benchmark the current computer, and see if it could be faster than 250ms to compute a hash
+	//Benchmark the current computer, and see if it could be faster than 250ms to compute a hash
+	testCostFactor := 11;
+	QueryPerformanceCounter(t1);
+	TScrypt.HashPassword('Benchmark', testCostFactor, 8, 1);
+	QueryPerformanceCounter(t2);
+	if not QueryPerformanceFrequency({var}freq) then Exit;
+
+	duration := (t2-t1)/freq*1000;
+
+	//Each single increase in CostFactor will double the execution time.
+	//We don't want the execution time to exceed 500ms
+	while (duration < 250) do
+	begin
+		duration := duration*2;
+		testCostFactor := testCostFactor+1;
+	end;
+
+	//And we certainly won't go any lower than the default 14,8,1 (anyone remember 8,N,1 anymore?)
+	if testCostFactor > CostFactor then
+	begin
+		OutputDebugString(PChar(Format('Increasing scrypt cost factor from default %d up to %d', [CostFactor, testCostFactor])));
+		CostFactor := testCostFactor;
+	end;
 end;
 
 class function TScrypt.Base64Decode(const s: string): TBytes;
@@ -938,11 +950,13 @@ begin
 	SetLength(data, 0);
 end;
 
-class function TScrypt.CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: string): Boolean;
+class function TScrypt.CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: string; out PasswordRehashNeeded: Boolean): Boolean;
 var
 	scrypt: TScrypt;
 	costFactor, blockSizeFactor, parallelizationFactor: Cardinal;
 	salt, expected, actual: TBytes;
+	t1, t2, freq: Int64;
+	duration: Real;
 const
 	SCouldNotParsePassword = 'Could not parse expected password hash';
 begin
@@ -952,21 +966,48 @@ begin
 		Returns
 			True: If the password is valid
 			False: If the password is invalid
+
+		PasswordRehashNeeded
+			Contains true if the user's password should be re-hashed and the new hash stored in the database.
+			The typical reason for rehashing is that the hash took less than the minimum 250ms to compute. The target is 250-500ms.
+			Another reason would be if the scrypt version has been updated, and the stored hash needs to be updated to the new
+			version. 
+
+			Contains false if the password does not need to be rehashed.
 	}
 	Result := False;
+	PasswordRehashNeeded := False;
 
 	scrypt := TScrypt.Create;
 	try
 		if not scrypt.TryParseHashString(ExpectedHashString, {out}costFactor, blockSizeFactor, parallelizationFactor, salt, expected) then
 			raise EScryptException.Create(SCouldNotParsePassword);
+		try
+			QueryPerformanceCounter(t1);
+			actual := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, ParallelizationFactor, Length(expected));
+			QueryPerformanceCounter(t2);
 
-		actual := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, ParallelizationFactor, Length(expected));
+			if Length(actual) <> Length(expected) then
+				Exit;
 
-		if Length(actual) = Length(expected) then
 			Result := CompareMem(@expected[0], @actual[0], Length(expected));
 
-		scrypt.BurnBytes(actual);
-		scrypt.BurnBytes(expected);
+			if Result then
+			begin
+				//Only advertise a rehash being needed if they got the correct password.
+				//Don't want someone blindly re-hashing with a bad password because they forgot to check the result,
+				//or because they decided to handle "PasswordRehashNeeded" first.
+				if QueryPerformanceFrequency(freq) then
+				begin
+					duration := (t2-t1)/freq * 1000; //ms
+					if duration < 250 then
+						PasswordRehashNeeded := True;
+				end;
+			end;
+		finally
+			scrypt.BurnBytes(actual);
+			scrypt.BurnBytes(expected);
+		end;
 	finally
 		scrypt.Free;
 	end;

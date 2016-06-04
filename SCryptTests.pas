@@ -72,6 +72,7 @@ type
 		//Password hashing
 		procedure Test_PasswordHashing; //Test, and verify, "correct horse battery staple"
 		procedure Test_JavaWgScrypt; //the only other example out there
+		procedure Test_RehashNeededKicksIn; 
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -367,6 +368,8 @@ begin
 end;
 
 procedure TScryptTests.Test_JavaWgScrypt;
+var
+	passwordRehashNeeded: Boolean;
 begin
 	{
 		From: https://github.com/wg/scrypt
@@ -378,8 +381,7 @@ begin
 
 
 	}
-	TScrypt.CheckPassword('secret', '$s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=');
-
+	TScrypt.CheckPassword('secret', '$s0$e0801$epIxT/h6HbbwHaehFnh/bw==$7H0vsXlY8UxxyW/BWx/9GuY7jEvGjT71GFd6O4SZND0=', {out}passwordRehashNeeded);
 end;
 
 procedure TScryptTests.Test_Base64;
@@ -436,6 +438,22 @@ begin
 	bufferActual := TScryptCracker.Base64Decode('epIxT/h6HbbwHaehFnh/bw==');
 	CheckEquals(Length(buffer), Length(bufferActual));
 	CheckEqualsMem(@buffer[0], @bufferActual[0], Length(bufferActual));
+end;
+
+procedure TScryptTests.Test_RehashNeededKicksIn;
+var
+	passwordRehashNeeded: Boolean;
+const
+	SHash = '$s1$0E0101$dVmS3NXyc0SHM0MBt4qR6Q==$kIF3PYaFHgoetpsSNxi08PGuC7/u+edZd1fRNCtUNnrQsKTCEjI2y6HOGH+S/J2yy7f1JywsSIyBkUfPeMrU9w==';
+begin
+	{
+		N=14,r=1,p=1 (2 MB, 37ms) is too weak for any password on any computer. You target is:
+			- regular passwords:      500ms
+			- sensitive passwords: 12,000ms
+	}
+
+	CheckTrue(TScrypt.CheckPassword('Hashes too fast', SHash, {out}passwordRehashNeeded));
+	CheckTrue(passwordRehashNeeded);
 end;
 
 { TSHA256Tester }
@@ -1250,6 +1268,7 @@ var
 	password: string;
 	hash: string;
 	freq, t1, t2: Int64;
+	passwordRehashNeeded: Boolean;
 begin
 	{
 		Test round trip of generating a hash, and then verifying it
@@ -1269,7 +1288,7 @@ begin
 	Self.CheckFalse(hash='');
 
 	if not QueryPerformanceCounter(t1) then t1 := 0;
-	Self.CheckTrue(TScrypt.CheckPassword('correct horse battery staple', hash));
+	Self.CheckTrue(TScrypt.CheckPassword('correct horse battery staple', hash, {out}passwordRehashNeeded));
 	if not QueryPerformanceCounter(t2) then t2 := 0;
 	Status(Format('Time to verify password: %.4f ms', [(t2-t1)/freq*1000]));
 end;

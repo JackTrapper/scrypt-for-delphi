@@ -1,5 +1,5 @@
 Scrypt for Delphi
-=====================
+=================
 
 [Scrypt](http://en.wikipedia.org/wiki/Scrypt) is a key derivation function. It is designed to take a password (and some salt), and generate a desired number of pseudo-random bytes. 
 
@@ -34,7 +34,7 @@ The `TScrypt` class also supports being used for password hashing (i.e. storage 
     
 - To verify a password:
 
-        isPasswordValid := TScrypt.CheckPassword('correct battery horse stapler', expectedHash);
+        isPasswordValid := TScrypt.CheckPassword('correct battery horse stapler', expectedHash, {out}passwordRehashNeeded);
 
 
 By convention TScrypt outputs a password hash as string in the form:
@@ -56,7 +56,7 @@ The parts of the string are:
 Because the three scrypt parameters are stored in the returned string, scrypt password hashes are backwards and forwards compatible with changing the factors. It also makes Scrypt extraordinarily convenient, in that a random salt is automatically generated and stored for you (you don't have to worry about storing it in a database or retrieving it).
 
 Scrypt Operation
-============
+================
 
 Scrypt uses three parameters to tune CPU and memory usage:
 
