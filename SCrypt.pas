@@ -71,6 +71,11 @@
 	Version History
 	===============
 
+	Version 1.6   20180913
+			- Added:  Use SASL StringPrep to prepare a user's passphrase for hashing (e.g. apply appropriate NFC unicode normal form, canonicalize all spaces characters to the standard space character)
+			- Change: Change from using TULargeInteger to ULARGE_INTEGER.
+						 Delphi 10.2 changed the definition of TULargeInteger from the structure to UInt64.
+				       We use the structure for backwards compatiblity.
 	Version 1.5   20160603
 			- Change: CheckPassword to take a boolean out parameter "PasswordRehashNeeded". PasswordRehashNeeded will contain true
 			  if you should call HashPassword again while you have the user's password handy.
@@ -242,7 +247,9 @@ type
 	TScrypt = class(TObject)
 	protected
 		procedure BurnBytes(var data: TBytes);
-		class function StringToUtf8(const Source: UnicodeString): TBytes;
+		procedure BurnString(var s: UnicodeString);
+		class function StringToUtf8(Source: UnicodeString): TBytes;
+		class function PasswordStringPrep(Source: UnicodeString): string;
 
 		class function Base64Encode(const data: array of Byte): string;
 		class function Base64Decode(const s: string): TBytes;
@@ -515,7 +522,7 @@ type
 	TSHA1 = class(TInterfacedObject, IHashAlgorithm)
 	private
 		FInitialized: Boolean;
-		FHashLength: TULargeInteger; //Number of bits put into the hash
+		FHashLength: ULARGE_INTEGER; //Number of bits put into the hash
 		FHashBuffer: array[0..63] of Byte;  //one step before W0..W15
 		FHashBufferIndex: Integer;  //Current position in HashBuffer
 		FABCDEBuffer: array[0..4] of LongWord; //working hash buffer is 160 bits (20 bytes)
@@ -569,7 +576,7 @@ type
 }
 	TCngHash = class(TInterfacedObject, IHashAlgorithm, IHmacAlgorithm)
 	private
-		FHmacMode: Boolean;
+		FHmacKey: TBytes;
 		FAlgorithm: BCRYPT_ALG_HANDLE;
 		FAlgorithmBlockSize: Integer;
 		FAlgorithmDigestSize: Integer;
@@ -589,13 +596,14 @@ type
 		procedure HashCore(Hash: BCRYPT_HASH_HANDLE; const Data; DataLen: Integer);
 		function HashFinal(Hash: BCRYPT_HASH_HANDLE): TBytes;
 	public
-		constructor Create(const AlgorithmID: UnicodeString; const Provider: PWideChar; HmacMode: Boolean);
+		constructor Create(AlgorithmID: string; HmacMode: Boolean; Provider: PWideChar=nil); overload;
+		constructor Create(const AlgorithmID: UnicodeString; HmacKey: TBytes); overload;
 		destructor Destroy; override;
 
 		class function IsAvailable: Boolean;
 
 		{ IHashAlgorithm }
-		procedure HashData(const Buffer; BufferLen: Integer); overload;
+		procedure HashData(const Buffer; BufferLen: Integer); overload; inline;
 		function Finalize: TBytes;
 
 		{ IHmacAlgoritm }
@@ -609,7 +617,7 @@ type
 	TSHA256 = class(TInterfacedObject, IHashAlgorithm)
 	private
 		FInitialized: Boolean;
-		FHashLength: TULargeInteger; //Number of bits put into the hash
+		FHashLength: ULARGE_INTEGER; //Number of bits put into the hash
 		FHashBuffer: array[0..63] of Byte;  //one step before W0..W15
 		FHashBufferIndex: Integer;  //Current position in HashBuffer
 		FCurrentHash: array[0..7] of LongWord;
@@ -666,19 +674,16 @@ type
 class function TScrypt.GetBytes(const Passphrase, Salt: UnicodeString; nDesiredBytes: Integer): TBytes;
 var
 	scrypt: TScrypt;
-	saltUtf8: TBytes;
 	costFactor, blockSizeFactor, parallelizationFactor: Cardinal;
 begin
-	saltUtf8 := TScrypt.StringToUtf8(Salt);
-
 	scrypt := TScrypt.Create;
 	try
-		scrypt.GetDefaultParameters(costFactor, blockSizeFactor, parallelizationFactor);
-
-		Result := scrypt.DeriveBytes(Passphrase, saltUtf8, costFactor, blockSizeFactor, parallelizationFactor, nDesiredBytes);
+		scrypt.GetDefaultParameters({out}costFactor, {out}blockSizeFactor, {out}parallelizationFactor);
 	finally
 		scrypt.Free;
 	end;
+
+	Result := scrypt.GetBytes(Passphrase, Salt, costFactor, blockSizeFactor, parallelizationFactor, nDesiredBytes);
 end;
 
 procedure TScrypt.GetDefaultParameters(out CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal);
@@ -699,11 +704,47 @@ begin
 		We'll do a 2MB benchmark, but using r=8, N=11    (i.e. 128*8*2^11 = 128*8* 2048 = 2MB)
 
 		The target for a normal user is 250-500 ms
+
+		|  N |  r |  Time (ms) | Memory  |
+		|----|----|------------|---------|
+		| 14 |  8 |   196.2 ms |   16 MB | <-- "normal"
+		| 14 |  9 |   258.5 ms |   18 MB |
+		| 14 | 10 |   265.8 ms |   20 MB |
+		| 14 | 11 |   309.2 ms |   22 MB |
+		| 14 | 12 |   320.2 ms |   24 MB |
+		| 14 | 13 |   326.4 ms |   26 MB |
+		| 14 | 14 |   346.1 ms |   28 MB |
+		| 14 | 15 |   381.4 ms |   30 MB |
+		| 14 | 16 |   418.9 ms |   32 MB |
+
+		| 15 |  5 |   290.0 ms |   20 MB |
+		| 15 |  6 |   331.6 ms |   24 MB |
+		| 15 |  7 |   388.5 ms |   28 MB |
+		| 15 |  8 |   427.6 ms |   32 MB |
+		| 15 |  9 |   475.1 ms |   36 MB |
+
+		| 16 |  2 |   236.3 ms |   16 MB |
+		| 16 |  3 |   337.3 ms |   24 MB |
+		| 16 |  4 |   436.7 ms |   32 MB |
+
+		| 17 |  2 |   492.6 ms |   32 MB |
+
+		| 18 |  2 |   982.1 ms |   64 MB |
+		| 19 |  2 |  1977.1 ms |  128 MB |
+		| 20 |  2 |  3972.0 ms |  256 MB |
+
+		| 20 |  8 | 12838.9 ms | 1024 MB |
+
+		Android disk encryption defaults are:
+
+			- N=32767 (cost factor 15, 2^15 = 32767)
+			- r=8 (block size is 8*128 = 1024 bytes)
+			- p=2 (parallelaization factor)
 	}
 
-	CostFactor := 14; //i.e. 2^14 = 16,384 iterations
-	BlockSizefactor := 8; //will operate on 128*8 = 1,024 byte blocks, and randomly access 128*8*2^14 = 16 MB of memory during the calculation
-	ParallelizationFactor := 1;
+	CostFactor := 14; //i.e. 2^14 = 16,384 iterations, and randomly access 2^14*8*128 = 16 MB of RAM during the calculation
+	BlockSizefactor := 8; //will operate on 8*128 = 1,024 byte blocks
+	ParallelizationFactor := 2;
 
 	//Benchmark the current computer, and see if it could be faster than 250ms to compute a hash
 	testCostFactor := 11;
@@ -770,8 +811,14 @@ begin
 
 		c1 := Char64(s[i  ]);
 		c2 := Char64(s[i+1]);
-		c3 := Char64(s[i+2]);
-		c4 := Char64(s[i+3]);
+		c3 := -1;
+		c4 := -1;
+		if (i+2) <= len then
+		begin
+			c3 := Char64(s[i+2]);
+			if (i+3) <= len then
+				c4 := Char64(s[i+3]);
+		end;
 		Inc(i, 4);
 
 		if (c1 = -1) or (c2 = -1) then
@@ -950,6 +997,16 @@ begin
 	SetLength(data, 0);
 end;
 
+procedure TScrypt.BurnString(var s: UnicodeString);
+begin
+	if Length(s) > 0 then
+	begin
+		UniqueString({var}s); //We can't FillChar the string if it's shared, or its in the constant data page
+		FillChar(s[1], Length(s), 0);
+		s := '';
+	end;
+end;
+
 class function TScrypt.CheckPassword(const Passphrase: UnicodeString; ExpectedHashString: string; out PasswordRehashNeeded: Boolean): Boolean;
 var
 	scrypt: TScrypt;
@@ -957,6 +1014,7 @@ var
 	salt, expected, actual: TBytes;
 	t1, t2, freq: Int64;
 	duration: Real;
+	preparedPassword: UnicodeString;
 const
 	SCouldNotParsePassword = 'Could not parse expected password hash';
 begin
@@ -977,14 +1035,14 @@ begin
 	}
 	Result := False;
 	PasswordRehashNeeded := False;
-
 	scrypt := TScrypt.Create;
 	try
 		if not scrypt.TryParseHashString(ExpectedHashString, {out}costFactor, blockSizeFactor, parallelizationFactor, salt, expected) then
 			raise EScryptException.Create(SCouldNotParsePassword);
 		try
+			preparedPassword := TScrypt.PasswordStringPrep(Passphrase);
 			QueryPerformanceCounter(t1);
-			actual := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, ParallelizationFactor, Length(expected));
+			actual := scrypt.DeriveBytes(preparedPassword, salt, costFactor, blockSizeFactor, parallelizationFactor, Length(expected));
 			QueryPerformanceCounter(t2);
 
 			if Length(actual) <> Length(expected) then
@@ -1007,6 +1065,7 @@ begin
 		finally
 			scrypt.BurnBytes(actual);
 			scrypt.BurnBytes(expected);
+			scrypt.BurnString(preparedPassword);
 		end;
 	finally
 		scrypt.Free;
@@ -1184,22 +1243,22 @@ begin
 	{ SHA1 }
 	if      IsAlgo('SHA1.PurePascal')        then Result := TSHA1.Create
 	else if IsAlgo('SHA1.Csp')               then Result := TCspHash.Create(CALG_SHA1, 64)
-	else if IsAlgo('SHA1.Cng')               then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil, False)
+	else if IsAlgo('SHA1.Cng')               then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, False)
 
 	{ SHA256 }
 	else if IsAlgo('SHA256.PurePascal')      then Result := TSHA256.Create
 	else if IsAlgo('SHA256.Csp')             then Result := TCspHash.Create(CALG_SHA_256, 64)
-	else if IsAlgo('SHA256.Cng')             then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil, False)
+	else if IsAlgo('SHA256.Cng')             then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, False)
 
 	{ HMAC - SHA1 }
 	else if IsAlgo('HMAC.SHA1.PurePascal')   then Result := THmac.Create(TSHA1.Create)
 	else if IsAlgo('HMAC.SHA1.csp')          then Result := THmac.Create(TCspHash.Create(CALG_SHA1, 64))
-	else if IsAlgo('HMAC.SHA1.Cng')          then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, nil, True)
+	else if IsAlgo('HMAC.SHA1.Cng')          then Result := TCngHash.Create(BCRYPT_SHA1_ALGORITHM, True)
 
 	{ HMAC - SHA256 }
 	else if IsAlgo('HMAC.SHA256.PurePascal') then Result := THmac.Create(TSHA256.Create)
 	else if IsAlgo('HMAC.SHA256.csp')        then Result := THmac.Create(TCspHash.Create(CALG_SHA_256, 64))
-	else if IsAlgo('HMAC.SHA256.Cng')        then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, nil, True)
+	else if IsAlgo('HMAC.SHA256.Cng')        then Result := TCngHash.Create(BCRYPT_SHA256_ALGORITHM, True)
 
 	{ PBKDF2 - SHA1 }
 	else if IsAlgo('PBKDF2.SHA1') then
@@ -1250,7 +1309,7 @@ function TScrypt.GenerateScryptSalt(const Passphrase: UnicodeString; const Salt:
   BlockSizeFactor, ParallelizationFactor: Integer): TBytes;
 var
 	B: TBytes;
-	i: UInt64;
+	i: Integer; //UInt64;  20180913 It can't *literally* be a UInt64.
 	blockSize: Integer;
 	blockIndex: Integer;
 	T: TBytes;
@@ -1288,6 +1347,7 @@ end;
 
 class function TScrypt.GetBytes(const Passphrase, Salt: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal; DesiredBytes: Integer): TBytes;
 var
+	preparedPassword: UnicodeString;
 	saltUtf8: TBytes;
 	scrypt: TScrypt;
 begin
@@ -1297,11 +1357,12 @@ begin
 
 		Memory requirement: BlockSize * Iterations = 128*BlockSizeFactor*(2^CostFactor)
 	}
+	preparedPassword := TScrypt.PasswordStringPrep(Passphrase);
 	saltUtf8 := TScrypt.StringToUtf8(Salt);
 
 	scrypt := TScrypt.Create;
 	try
-		Result := scrypt.DeriveBytes(Passphrase, saltUtf8, CostFactor, BlockSizeFactor, ParallelizationFactor, DesiredBytes);
+		Result := scrypt.DeriveBytes(preparedPassword, saltUtf8, CostFactor, BlockSizeFactor, ParallelizationFactor, DesiredBytes);
 	finally
 		scrypt.Free;
 	end;
@@ -1313,7 +1374,6 @@ var
 	blockSizeFactor: Cardinal;
 	parallelizationFactor: Cardinal;
 	scrypt: TScrypt;
-	salt, derivedBytes: TBytes;
 begin
 	{
 		Generate a password hash, letting TScrypt decide the best parameters.
@@ -1331,29 +1391,27 @@ begin
 			Password: "correct horse battery staple"
 			Hash: "$s1$0E0801$G34Rvmk2DSkp9sFJyyM49O$z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e"
 
-					CostFactor: 0x0E (14), Cost=2^14 = 16384
-					BlockSizeFacdtor: 0x08, BlockSize = 128 * 8 = 1,024 bytes
+					CostFactor:             0x0E (14), Cost=2^14 = 16384
+					BlockSizeFacdtor:       0x08,      BlockSize = 128*8 = 1,024 bytes
 					Parallelization Factor: 0x1
-					Salt (base64): G34Rvmk2DSkp9sFJyyM49O
-					Password (base64): z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e
+					Salt (base64):          G34Rvmk2DSkp9sFJyyM49O
+					Password (base64):      z3XxEUNlHDhq2nCR1Yh4tqKCelFQ9gnFNgtmgoBJHW4zeAIDoAjV5zcOLYk5lLqoGEFQNQ6YoOvXHAlVjPJS9e
 	}
 	scrypt := TScrypt.Create;
 	try
-		salt := scrypt.GenerateSalt;
-		scrypt.GetDefaultParameters({out}costFactor, blockSizeFactor, parallelizationFactor);
-
-		derivedBytes := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, parallelizationFactor, SCRYPT_HASH_LEN);
-
-		Result := scrypt.FormatPasswordHash(costFactor, blockSizeFactor, parallelizationFactor, salt, derivedBytes);
+		scrypt.GetDefaultParameters({out}costFactor, {out}blockSizeFactor, {out}parallelizationFactor);
 	finally
 		scrypt.Free;
 	end;
+
+	Result := TScrypt.HashPassword(Passphrase, costFactor, blockSizeFactor, parallelizationFactor);
 end;
 
 class function TScrypt.HashPassword(const Passphrase: UnicodeString; CostFactor, BlockSizeFactor, ParallelizationFactor: Cardinal): string;
 var
 	scrypt: TScrypt;
 	salt, derivedBytes: TBytes;
+	preparedPassword: UnicodeString;
 begin
 	{
 	Hash the password, using the supplied parameters.
@@ -1452,7 +1510,12 @@ begin
 	try
 		salt := scrypt.GenerateSalt;
 
-		derivedBytes := scrypt.DeriveBytes(Passphrase, salt, costFactor, blockSizeFactor, ParallelizationFactor, SCRYPT_HASH_LEN);
+		preparedPassword := TScrypt.PasswordStringPrep(Passphrase);
+		try
+			derivedBytes := scrypt.DeriveBytes(preparedPassword, salt, costFactor, blockSizeFactor, ParallelizationFactor, SCRYPT_HASH_LEN);
+		finally
+			scrypt.BurnString({var}preparedPassword);
+		end;
 
 		Result := scrypt.FormatPasswordHash(costFactor, blockSizeFactor, ParallelizationFactor, salt, derivedBytes);
 	finally
@@ -1791,49 +1854,230 @@ begin
 	Result[14] := Result[14] + X14;
 	Result[15] := Result[15] + X15;
 end;
-{$OVERFLOWCHECKS ON}
 
-class function TScrypt.StringToUtf8(const Source: UnicodeString): TBytes;
+class function TScrypt.StringToUtf8(Source: UnicodeString): TBytes;
 var
 	strLen: Integer;
 	dw: DWORD;
 const
 	CodePage = CP_UTF8;
+	SLenError = '[StringToUtf8] Could not get length of destination string. Error %d (%s)';
+	SConvertStringError = '[StringToUtf8] Could not convert utf16 to utf8 string. Error %d (%s)';
 begin
-{
-	For scrypt passwords we will use UTF-8 encoding.
-}
-//	Result := TEncoding.UTF8.GetBytes(s);
+	SetLength(Result, 0);
 
 	if Length(Source) = 0 then
-	begin
-		SetLength(Result, 0);
 		Exit;
-	end;
 
 	// Determine real size of destination string, in bytes
-	strLen := WideCharToMultiByte(CodePage, 0,
+	strLen := WideCharToMultiByte(CP_UTF8, 0,
 			PWideChar(Source), Length(Source), //Source
 			nil, 0, //Destination
 			nil, nil);
 	if strLen = 0 then
 	begin
 		dw := GetLastError;
-		raise EConvertError.Create('[StringToUtf8] Could not get length of destination string. Error '+IntToStr(dw)+' ('+SysErrorMessage(dw)+')');
+		raise EConvertError.CreateFmt(SLenError, [dw, SysErrorMessage(dw)]);
 	end;
 
 	// Allocate memory for destination string
 	SetLength(Result, strLen);
 
-	// Convert source UTF-16 string (UnicodeString) to the destination using the code-page
+	// Convert source UTF-16 string (WideString) to the destination using the code-page
 	strLen := WideCharToMultiByte(CodePage, 0,
 			PWideChar(Source), Length(Source), //Source
-			PAnsiChar(@Result[0]), strLen, //Destination
+			PAnsiChar(Result), strLen, //Destination
 			nil, nil);
 	if strLen = 0 then
 	begin
 		dw := GetLastError;
-		raise EConvertError.Create('[WideStringToUtf8] Could not convert utf16 to utf8 string. Error '+IntToStr(dw)+' ('+SysErrorMessage(dw)+')');
+		raise EConvertError.CreateFmt(SConvertStringError, [dw, SysErrorMessage(dw)]);
+	end;
+end;
+
+{$OVERFLOWCHECKS ON}
+
+class function TScrypt.PasswordStringPrep(Source: UnicodeString): string;
+var
+	strLen: Integer;
+	dw: DWORD;
+	i: Integer;
+const
+	CodePage = CP_UTF8;
+	SLenError = '[PasswordStringPrep] Could not get length of destination string. Error %d (%s)';
+	SConvertStringError = '[PasswordStringPrep] Could not convert utf16 to utf8 string. Error %d (%s)';
+begin
+	Result := '';
+	if Length(Source) = 0 then
+		Exit;
+
+	{
+		NIST Special Publication 800-63-3B (Digital Authentication Guideline - Authentication and Lifecycle Management)
+		https://pages.nist.gov/800-63-3/sp800-63b.html
+
+		Reminds us to normalize the string (using either NFKC or NFKD).
+			- K (Compatibility normalization): decomposes ligatures into base compatibilty characters
+			- C (Composition):                 adds character+diacritic into single code point (if possible)
+			- D (Decomposition):               separates an accented character into the letter and the diacritic
+
+		SASLprep (RFC4013) agrees, saying to use NFKC:
+
+			2.2.  Normalization
+
+				This profile specifies using Unicode normalization form KC, as described in Section 4 of [StringPrep].
+
+		StringPrep (rfc3454, Preparation of Internationalized Strings ("stringprep")) both specified NFKC:
+
+			4. Normalization
+
+				The output of the mapping step is optionally normalized using one of
+				the Unicode normalization forms, as described in [UAX15].  A profile
+				can specify one of two options for Unicode normalization:
+
+				- no normalization
+
+				- Unicode normalization with form KC
+
+
+		Composition means combining diacritics into base characters
+
+			Before: Noe¨l
+			After:  Noël
+
+
+		But
+				RFC4013 - SASLprep: Stringprep Profile for User Names and Passwords (NFKC)
+
+		was obsoleted by
+
+				RFC7613 - Preparation, Enforcement, and Comparison of Internationalized Strings Representing Usernames and Passwords
+
+		and reverses earlier RFC, and specifies NFC:
+
+			4.2.2.  Enforcement
+
+				An entity that performs enforcement according to this profile MUST
+				prepare a string as described in Section 4.2.1 and MUST also apply
+				the rules specified below for the OpaqueString profile (these rules
+				MUST be applied in the order shown):
+
+				1.  Width-Mapping Rule: Fullwidth and halfwidth characters MUST NOT
+					 be mapped to their decomposition mappings (see Unicode Standard
+					 Annex #11 [UAX11]).
+
+				2.  Additional Mapping Rule: Any instances of non-ASCII space MUST be
+					 mapped to ASCII space (U+0020); a non-ASCII space is any Unicode
+					 code point having a Unicode general category of "Zs" (with the
+					 exception of U+0020).
+
+				3.  Case-Mapping Rule: Uppercase and titlecase characters MUST NOT be
+					 mapped to their lowercase equivalents.
+
+				4.  Normalization Rule: Unicode Normalization Form C (NFC) MUST be
+					 applied to all characters.
+
+		This was probably mainly done because Compatibility Composition leads to data loss. From Microsoft:
+
+			[Using Unicode Normalization to Represent Strings](https://msdn.microsoft.com/en-us/library/windows/desktop/dd374126.aspx)
+			--------------------
+
+				Forms KC and KD are similar to forms C and D, respectively, but these "compatibility forms" have additional
+				mappings of compatible characters to the basic form of each character. Such mappings can cause minor
+				character variations to be lost. They combine certain characters that are visually distinct. For example,
+				they combine full-width and half-width characters with the same semantic meaning, or different forms of the
+				same Arabic letter, or the ligature "ﬁ" (U+FB01) and the character pair "fi" (U+0066 U+0069). They also
+				combine some characters that might sometimes have a different semantic meaning, such as a digit written
+				as a superscript, as a subscript, or enclosed in a circle.
+
+				**Because of this information loss, forms KC and KD generally should not be used as canonical forms of strings,**
+				but they are useful for certain applications.
+
+				Form KC is a composed form and form KD is a decomposed form. The application can go back and forth between
+				forms KC and KD, but there is no consistent way to go from form KC or KD back to the original string,
+				even if the original string is in form C or D.
+
+				Windows, Microsoft applications, and the .NET Framework generally generate characters in form C using normal
+				input methods. For most purposes on Windows, form C is the preferred form. For example, characters in form
+				C are produced by Windows keyboard input. However, characters imported from the Web and other platforms can
+				introduce other normalization forms into the data stream.
+
+		This loss of data when using KC is evident in RFC7613's requirement:
+
+				...halfwidth characters MUST NOT be mapped to their decomposition mappings...
+
+		Using Form NFKC causes the half-width character
+
+			U+FFC3  HALFWIDTH HANGUL LETTER AE         UTF8 0xEF 0xBF 0x83
+
+		to be mapped to:
+
+			U+1162  HANGUL JUNGSEONG AE                UTF8 0xE1 0x85 0xA2
+
+
+		Spaces
+		======
+
+		RFC7613 (Preparation, Enforcement, and Comparison of Internationalized Strings Representing Usernames and Passwords)
+
+			(like RFC4013 that it obsoletes)
+
+		also reminds us to normalize all the differnet unicode space characters into the standard single U+0020 SPACE:
+
+			2.  Additional Mapping Rule: Any instances of non-ASCII space MUST be mapped to ASCII space (U+0020);
+				 a non-ASCII space is any Unicode code point having a Unicode general category of "Zs"
+				 (with the  exception of U+0020).
+
+					U+0020	SPACE
+					U+00A0	NO-BREAK SPACE
+					U+1680	OGHAM SPACE MARK
+					U+2000	EN QUAD
+					U+2001	EM QUAD
+					U+2002	EN SPACE
+					U+2003	EM SPACE
+					U+2004	THREE-PER-EM SPACE
+					U+2005	FOUR-PER-EM SPACE
+					U+2006	SIX-PER-EM SPACE
+					U+2007	FIGURE SPACE
+					U+2008	PUNCTUATION SPACE
+					U+2009	THIN SPACE
+					U+200A	HAIR SPACE
+					U+202F	NARROW NO-BREAK SPACE
+					U+205F	MEDIUM MATHEMATICAL SPACE
+					U+3000	IDEOGRAPHIC SPACE
+
+			This is handled by NFC.
+	}
+
+	//Convert any spaces (Unicode category Z) into canonical U+0020
+	for i := 1 to Length(Source) do
+	begin
+		case Word(Source[i]) of
+		$00A0, $1680, $2000, $2001, $2002, $2003, $2004, $2005, $2006, $2007, $2008, $2009, $200A, $202F, $205F, $3000:
+			begin
+				Source[i] := #$0020;
+			end;
+		end;
+	end;
+
+	//We use concrete variable for length, because i've seen it return asking for 64 bytes for a 6 byte string
+//	normalizedLength := NormalizeString(5, PWideChar(Source), Length(Source), nil, 0);
+	strLen := FoldString(MAP_PRECOMPOSED, PWideChar(Source), Length(Source), nil, 0);
+	if strLen = 0 then
+	begin
+		dw := GetLastError;
+		raise EConvertError.CreateFmt(SLenError, [dw, SysErrorMessage(dw)]);
+	end;
+
+	// Allocate memory for destination string
+	SetLength(Result, strLen);
+
+	// Now do it for real
+//	normalizedLength := NormalizeString(5, PWideChar(Source), Length(Source), PWideChar(normalized), Length(normalized));
+	strLen := FoldString(MAP_PRECOMPOSED, PWideChar(Source), Length(Source), PWideChar(Result), Length(Result));
+	if strLen = 0 then
+	begin
+		dw := GetLastError;
+		raise EConvertError.CreateFmt(SLenError, [dw, SysErrorMessage(dw)]);
 	end;
 end;
 
@@ -2134,7 +2378,7 @@ begin
 	0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18
 	*   *           *            *        =
 	  *   *           *             *        =
-		 *   *           *             *         =
+	    *   *           *             *         =
 	}
 	//160.5 MB/s
 //	for i := 16 to 79 do
@@ -2895,43 +3139,22 @@ begin
 	end;
 end;
 
-constructor TCngHash.Create(const AlgorithmID: UnicodeString; const Provider: PWideChar; HmacMode: Boolean);
-var
-	nts: NTSTATUS;
-	algorithm: BCRYPT_ALG_HANDLE;
-	objectLength: DWORD;
-	bytesReceived: Cardinal;
-	dwFlags: Cardinal;
+constructor TCngHash.Create(const AlgorithmID: UnicodeString; HmacKey: TBytes);
 begin
-	inherited Create;
+	{
+		BCrypt hash algorithm identifiers:
 
-	Self.RequireBCrypt;
+			- 'md2'
+			- 'md4'
+			- 'md5'
+			- 'sha1'
+			- 'sha256'
+			- 'sha384'
+			- 'sha512'
+	}
+	Self.Create(AlgorithmID, True);
 
-	FHmacMode := HmacMode;
-	if HmacMode then
-		dwFlags := BCRYPT_ALG_HANDLE_HMAC_FLAG
-	else
-		dwFlags := 0;
-
-	nts := _BCryptOpenAlgorithmProvider({out}algorithm,
-			PWideChar(AlgorithmID), //Algorithm: e.g. BCRYPT_SHA1_ALGORITHM ("SHA1")
-			Provider, //Provider. nil ==> default
-			dwFlags
-			);
-	NTStatusCheck(nts);
-
-	FAlgorithm := algorithm;
-
-	//Get Algorithm block size
-	FAlgorithmBlockSize := TCngHash.GetBcryptAlgorithmBlockSize(FAlgorithm);
-	FAlgorithmDigestSize := TCngHash.GetBcryptAlgorithmDigestSize(FAlgorithm);
-
-	//Get the length of the hash data object, so we can provide the required buffer
-	nts := _BCryptGetProperty(algorithm,
-			PWideChar(BCRYPT_OBJECT_LENGTH), @objectLength, SizeOf(objectLength), {out}bytesReceived, 0);
-	NTStatusCheck(nts);
-
-	SetLength(FHashObjectBuffer, objectLength);
+	FHmacKey := HmacKey;
 end;
 
 destructor TCngHash.Destroy;
@@ -2949,9 +3172,6 @@ end;
 
 function TCngHash.Finalize: TBytes;
 begin
-	if FHmacMode then
-		raise EScryptException.Create('Cng hash object is in HMAC mode');
-
 	Result := Self.HashFinal(FHash);
 
 	Self.Burn;
@@ -2965,6 +3185,54 @@ end;
 function TCngHash.GetDigestSize: Integer;
 begin
 	Result := FAlgorithmDigestSize;
+end;
+
+constructor TCngHash.Create(AlgorithmID: string; HmacMode: Boolean; Provider: PWideChar=nil);
+var
+	nts: NTSTATUS;
+	algorithm: BCRYPT_ALG_HANDLE;
+	objectLength: DWORD;
+	bytesReceived: Cardinal;
+	dwFlags: Cardinal;
+begin
+	inherited Create;
+	{
+		BCrypt hash algorithm identifiers:
+
+			- 'md2'
+			- 'md4'
+			- 'md5'
+			- 'sha1'
+			- 'sha256'
+			- 'sha384'
+			- 'sha512'
+	}
+	Self.RequireBCrypt;
+
+	dwFlags := 0;
+	if HmacMode then
+		dwFlags := BCRYPT_ALG_HANDLE_HMAC_FLAG;
+
+	nts := _BCryptOpenAlgorithmProvider({out}algorithm,
+			PWideChar(AlgorithmID), //Algorithm: e.g. BCRYPT_SHA1_ALGORITHM ("SHA1")
+			Provider, //Provider. nil ==> default
+			dwFlags
+			);
+	NTStatusCheck(nts);
+
+	FAlgorithm := algorithm;
+
+	//Get Algorithm block size
+	FAlgorithmBlockSize := TCngHash.GetBcryptAlgorithmBlockSize(FAlgorithm);
+	FAlgorithmDigestSize := TCngHash.GetBcryptAlgorithmDigestSize(FAlgorithm);
+
+	//Get the length of the hash data object, so we can provide the required buffer
+	nts := _BCryptGetProperty(algorithm, PWideChar(BCRYPT_OBJECT_LENGTH), @objectLength, SizeOf(objectLength), {out}bytesReceived, 0);
+	NTStatusCheck(nts);
+
+	SetLength(FHashObjectBuffer, objectLength);
+
+//	Self.Initialize; delay initializtion until needed; giving them the opportunity to change the hmac key after construction
 end;
 
 class function TCngHash.GetBcryptAlgorithmBlockSize(Algorithm: BCRYPT_HASH_HANDLE): Integer;
@@ -3007,28 +3275,19 @@ end;
 
 function TCngHash.HashData(const Key; KeyLen: Integer; const Data; DataLen: Integer): TBytes;
 var
-	hash: BCRYPT_HASH_HANDLE;
-	hr: NTSTATUS;
+	hmacKey: TBytes;
 begin
-	ZeroMemory(@FHashObjectBuffer[0], Length(FHashObjectBuffer));
+	SetLength(hmacKey, KeyLen);
+	if KeyLen > 0 then
+		Move(Key, hmacKey[0], KeyLen);
+	FHmacKey := hmacKey;
 
-	hr := _BCryptCreateHash(FAlgorithm, {out}hash, @FHashObjectBuffer[0], Length(FHashObjectBuffer), Pointer(@Key), KeyLen, 0);
-	NTStatusCheck(hr);
-	try
-		Self.HashCore(hash, Data, DataLen);
-
-		Result := Self.HashFinal(hash);
-	finally
-		_BCryptDestroyHash(hash);
-		ZeroMemory(@FHashObjectBuffer[0], Length(FHashObjectBuffer));
-	end;
+	Self.HashData(Data, DataLen);
+	Result := Self.Finalize;
 end;
 
 procedure TCngHash.HashData(const Buffer; BufferLen: Integer);
 begin
-	if FHmacMode then
-		raise EScryptException.Create('Cng hash object is in HMAC mode');
-
 	Self.Initialize;
 	Self.HashCore(FHash, Buffer, BufferLen);
 end;
@@ -3047,12 +3306,21 @@ end;
 
 procedure TCngHash.Initialize;
 var
+	pbSecret: Pointer;
+	cbSecret: Integer;
 	hash: BCRYPT_HASH_HANDLE;
 	hr: NTSTATUS;
 begin
 	if FHash = 0 then
 	begin
-		hr := _BCryptCreateHash(FAlgorithm, {out}hash, @FHashObjectBuffer[0], Length(FHashObjectBuffer), nil, 0, 0);
+		pbSecret := nil;
+		cbSecret := 0;
+		if Length(FHmacKey) > 0 then
+		begin
+			pbSecret := Pointer(@FHmacKey[0]);
+			cbSecret := Length(FHmacKey);
+		end;
+		hr := _BCryptCreateHash(FAlgorithm, {out}hash, @FHashObjectBuffer[0], Length(FHashObjectBuffer), pbSecret, cbSecret, 0);
 		NTStatusCheck(hr);
 
 		FHash := hash;
@@ -3223,7 +3491,7 @@ var
 	l, r, i, j: Integer;
 	dwULen: DWORD;
 	derivedKey: TBytes;
-	utf8Password: TBytes;
+	passwordBytes: TBytes;
 begin
 	{
 		Password-Based Key Derivation Function 2
@@ -3260,7 +3528,7 @@ begin
 
 	SetLength(derivedKey, DesiredBytes);
 
-	utf8Password := TScrypt.StringToUtf8(Password);
+	passwordBytes := TScrypt.StringToUtf8(Password);
 
 	for i := 1 to l do
 	begin
@@ -3285,7 +3553,7 @@ begin
 			end;
 
 			//Run Password and U through HMAC to get digest V
-			V := FHMAC.HashData(utf8Password[0], Length(utf8Password), U[0], dwULen);
+			V := FHMAC.HashData(passwordBytes[0], Length(passwordBytes), U[0], dwULen);
 
 			//Ti <- Ti xor V
 			TScrypt.XorBlockInPlace({var}Ti[0], V[0], hlen);
