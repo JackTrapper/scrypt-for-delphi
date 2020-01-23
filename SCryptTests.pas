@@ -15,12 +15,14 @@ type
 
 		function GetTimestamp: Int64;
 
-		class function StringToUtf8Bytes(const s: UnicodeString): TBytes;
+		class function StringToUtf8(const s: UnicodeString): TBytes;
+		procedure CheckEqualsBytes(const ExpectedBytes: array of Byte; const ActualBytes: array of Byte; msg: string='');
 
 		procedure Tester_HMAC_SHA1(HMACsha1: IHmacAlgorithm);
 		procedure Tester_HMAC_SHA256(HMACsha256: IHmacAlgorithm);
 		procedure Tester_PBKDF2_SHA1(Pbkdf: IPBKDF2Algorithm);
 		procedure Tester_PBKDF2_SHA256(Pbkdf2sha256: IPBKDF2Algorithm);
+		procedure TestStringPrep(const s: UnicodeString; Expected: array of Byte);
 
 		procedure Test_Scrypt_PasswordFormatting; //todo
 	public
@@ -72,7 +74,12 @@ type
 		//Password hashing
 		procedure Test_PasswordHashing; //Test, and verify, "correct horse battery staple"
 		procedure Test_JavaWgScrypt; //the only other example out there
-		procedure Test_RehashNeededKicksIn; 
+		procedure Test_RehashNeededKicksIn;
+
+		procedure UnicodeNormalizationComposition; //check that we use unicode compatible composition (NFC) on passwords (NIST SP 800-63B)
+		procedure PasswordPrep_HalfWidthFullWidth; //SASLprep rules for passwords
+		procedure PasswordPrep_Spaces; //convert all Z category spaces to U+0020
+		procedure NormalizedPasswordsMatch; //check that composed and decomposed strings both validate to the same
 	end;
 
 	TSHA1Tester = class(TObject)
@@ -175,7 +182,7 @@ var
 begin
 	{This is the test data from FIPS-180 Appendix A}
 	szInData := 'abc';
-	testData := TScryptTests.StringToUtf8Bytes(szInData);
+	testData := TScryptTests.StringToUtf8(szInData);
 
 	FSha1.HashData(testData[0], Length(testData));
 	Digest := FSha1.Finalize;
@@ -199,7 +206,7 @@ var
 begin
 	{This is the test data from FIPS-180 Appendix B}
 	szInData := 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq';
-	testData := TScryptTests.StringToUtf8Bytes(szInData);
+	testData := TScryptTests.StringToUtf8(szInData);
 
 	FSha1.HashData(TestData[0], Length(TestData));
 	digest := FSha1.Finalize;
@@ -317,6 +324,39 @@ begin
 	TSHA256Tester.Test(sha256);
 end;
 
+procedure TScryptTests.UnicodeNormalizationComposition;
+var
+	password: UnicodeString;
+begin
+	{
+		NIST SP 800-63B specified the use of NFKC.
+		RFC4013 (February 2005) specifies the use of NFKC. Obsoleted by RFC7613
+		RFC7613 (August 2015) specifically rescinded the earlier use of NFKC in favor of NFC - because of reasons. Obsoleted by RFC8265.
+		RFC8265 (October 2017) specifically reminds us that we're not to use NFKC, and should use NFC.
+
+		Check that we use unicode compatible composition (NFC) on passwords.
+
+		Before: A + ¨ + fi + n
+				A:  U+0041
+				¨:  U+0308  Combining Diaeresis
+				fi: U+FB01  Latin Small Ligature Fi
+				n:  U+006E
+
+		Normalized C:  Ä + fi + n
+				Ä:  U+00C4  Latin Capital Letter A with Diaeresis
+				fi: U+FB01  Latin Small Ligature Fi
+				n:  U+006E
+
+		Final UTF-8:
+				Ä:  0xC3 0x84
+				fi: 0xEF 0xAC 0x81
+				n:  0x6E
+	}
+	password := 'A' + #$0308 + #$FB01 + 'n';
+
+	TestStringPrep(password, [$C3, $84, $EF, $AC, $81, $6E]);
+end;
+
 procedure TScryptTests.SetUp;
 begin
 	inherited;
@@ -334,37 +374,9 @@ begin
 	inherited;
 end;
 
-class function TScryptTests.StringToUtf8Bytes(const s: UnicodeString): TBytes;
-var
-	strLen: Integer;
-	dw: DWORD;
+class function TScryptTests.StringToUtf8(const s: UnicodeString): TBytes;
 begin
-	strLen := Length(s);
-
-	if strLen = 0 then
-	begin
-		SetLength(Result, 0);
-		Exit;
-	end;
-
-	// Determine real size of destination string, in bytes
-	strLen := WideCharToMultiByte(CP_UTF8, 0, PWideChar(s), Length(s), nil, 0, nil, nil);
-	if strLen = 0 then
-	begin
-		dw := GetLastError;
-		raise EConvertError.Create('Could not get length of destination string. Error '+IntToStr(dw)+' ('+SysErrorMessage(dw)+')');
-	end;
-
-	// Allocate memory for destination string
-	SetLength(Result, strLen);
-
-	// Convert source UTF-16 string (UnicodeString) to the destination using the code-page
-	strLen := WideCharToMultiByte(CP_UTF8, 0, PWideChar(s), Length(s), PAnsiChar(@Result[0]), strLen, nil, nil);
-	if strLen = 0 then
-	begin
-		dw := GetLastError;
-		raise EConvertError.Create('Could not convert utf16 to utf8 string. Error '+IntToStr(dw)+' ('+SysErrorMessage(dw)+')');
-	end;
+	Result := TScryptCracker.StringToUtf8(s);
 end;
 
 procedure TScryptTests.Test_JavaWgScrypt;
@@ -521,11 +533,11 @@ end;
 
 procedure TSHA256Tester.t(const s: string; expectedHash: string);
 var
-   utf8Data: TBytes;
-   digest: TBytes;
-   expectedBytes: TBytes;
+	utf8Data: TBytes;
+	digest: TBytes;
+	expectedBytes: TBytes;
 begin
-	utf8Data := TScryptTests.StringToUtf8Bytes(s);
+	utf8Data := TScryptTests.StringToUtf8(s);
 	expectedBytes := HexStringToBytes(expectedHash);
 
 	FSHA256.HashData(Pointer(utf8Data)^, Length(utf8Data));
@@ -795,10 +807,153 @@ begin
 	Status(Format('%s: %.3f MB/s', ['SHA256', (Length(data)/1024/1024) / (best/FFreq)]));
 end;
 
+procedure TScryptTests.CheckEqualsBytes(const ExpectedBytes, ActualBytes: array of Byte; msg: string);
+begin
+	CheckEquals(Length(ExpectedBytes), Length(ActualBytes));
+
+	if Length(ActualBytes) = 0 then
+		Exit;
+
+	CheckEqualsMem(@ExpectedBytes[0], @ActualBytes[0], Length(ActualBytes), msg);
+end;
+
 function TScryptTests.GetTimestamp: Int64;
 begin
 	if not QueryPerformanceCounter(Result) then //it's documented to never fail; but it can. See SO
 		Result := 0;
+end;
+
+procedure TScryptTests.NormalizedPasswordsMatch;
+var
+	password1: UnicodeString;
+	password2: UnicodeString;
+	hash: string;
+	passwordRehashNeeded: Boolean;
+	bRes: Boolean;
+begin
+	{
+		There are four Unicode normalization schemes:
+
+			NFC	Composition
+			NFD	Decomposition
+			NFKC	Compatible Composition   <--- the one we use
+			NFKD	Compatible Decomposition
+
+		NIST Special Publication 800-63-3B (Digital Authentication Guideline - Authentication and Lifecycle Management)
+			says that passwords should have unicode normalization KC or KD applied.
+
+		RFC7613 (SASLprep) specifies the use of NFKC
+			https://tools.ietf.org/html/rfc7613
+			 Preparation, Enforcement, and Comparison of Internationalized Strings Representing Usernames and Passwords
+
+		Original
+				A:  U+0041
+				¨:  U+0308  Combining Diaeresis
+				fi: U+FB01  Latin Small Ligature Fi
+				n:  U+006E
+
+		Normalized:  Ä + fi + n
+				Ä:  U+00C4  Latin Capital Letter A with Diaeresis
+				fi: U+FB01  Latin Small Ligature Fi
+				n:  U+006E
+	}
+	password1 := 'A' + #$0308 + #$FB01 + 'n';
+	password2 := #$00C4 + #$FB01 + 'n';
+
+	hash := TScrypt.HashPassword(password1, 1, 16, 1);
+	bRes := TScrypt.CheckPassword(password2, hash, {out}passwordRehashNeeded);
+
+	CheckTrue(bRes, 'Passwords "'+password1+'" and "'+password2+'" do not validate to each other');
+end;
+
+procedure TScryptTests.PasswordPrep_HalfWidthFullWidth;
+var
+	pass: UnicodeString;
+begin
+	{
+		SASLprep rules for passwords
+		RFC7613 (SASLprep) specifies that we must normalize
+			https://tools.ietf.org/html/rfc7613
+			 Preparation, Enforcement, and Comparison of Internationalized Strings Representing Usernames and Passwords
+
+		4.2.2.  Enforcement
+
+		1. Width-Mapping Rule: Fullwidth and halfwidth characters MUST NOT be mapped to their decomposition mappings
+			(see Unicode Standard Annex #11 [UAX11](https://tools.ietf.org/html/rfc7613#ref-UAX11)).
+
+
+		2. Additional Mapping Rule: Any instances of non-ASCII space MUST be mapped to ASCII space (U+0020);
+			a non-ASCII space is any Unicode code point having a Unicode general category of "Zs" (with the exception of U+0020).
+
+		3. Case-Mapping Rule: Uppercase and titlecase characters MUST NOT be mapped to their lowercase equivalents.
+
+		4.  Normalization Rule: Unicode Normalization Form C (NFC) MUST be applied to all characters.
+	}
+
+	{
+		Fullwidth "Test"
+
+			U+FF34  FULLWIDTH LATIN CAPITAL LETTER T   UTF8 0xEF 0xBC 0xB4
+			U+FF45  FULLWIDTH LATIN SMALL   LETTER e   UTF8 0xEF 0xBD 0x85
+			U+FF53  FULLWIDTH LATIN SMALL   LETTER s   UTF8 0xEF 0xBD 0x93
+			U+FF54  FULLWIDTH LATIN SMALL   LETTER t   UTF8 0xEF 0xBD 0x94
+	}
+	pass := #$ff34 + #$ff45 + #$ff53 + #$ff54;
+	TestStringPrep(pass, [$ef, $bc, $b4, $ef, $bd, $85, $ef, $bd, $93, $ef, $bd, $94]);
+
+
+	{
+		Halfwidth
+			U+FFC3  HALFWIDTH HANGUL LETTER AE         UTF8 0xEF 0xBF 0x83
+
+		Windows MAP_FOLDCZONE decomposes
+			U+FFC3  HALFWIDTH HANGUL LETTER AE         UTF8 0xEF 0xBF 0x83
+
+		into
+			U+1162  HANGUL JUNGSEONG AE                UTF8 0xE1 0x85 0xA2
+	}
+	pass := #$ffc3;
+	TestStringPrep(pass, [$ef, $bf, $83]);
+end;
+
+procedure TScryptTests.PasswordPrep_Spaces;
+begin
+	{
+		SASLprep rules for passwords
+		RFC7613 (SASLprep) specifies that we must normalize
+			https://tools.ietf.org/html/rfc7613
+			 Preparation, Enforcement, and Comparison of Internationalized Strings Representing Usernames and Passwords
+
+		4.2.2.  Enforcement
+
+		1. Width-Mapping Rule: Fullwidth and halfwidth characters MUST NOT be mapped to their decomposition mappings
+			(see Unicode Standard Annex #11 [UAX11](https://tools.ietf.org/html/rfc7613#ref-UAX11)).
+
+
+		2. Additional Mapping Rule: Any instances of non-ASCII space MUST be mapped to ASCII space (U+0020);
+			a non-ASCII space is any Unicode code point having a Unicode general category of "Zs" (with the exception of U+0020).
+
+		3. Case-Mapping Rule: Uppercase and titlecase characters MUST NOT be mapped to their lowercase equivalents.
+
+		4.  Normalization Rule: Unicode Normalization Form C (NFC) MUST be applied to all characters.
+	}
+	TestStringPrep(#$0020, [$20]); //U+0020	SPACE
+	TestStringPrep(#$00A0, [$20]); //U+00A0	NO-BREAK SPACE
+	TestStringPrep(#$1680, [$20]); //U+1680	OGHAM SPACE MARK
+	TestStringPrep(#$2000, [$20]); //U+2000	EN QUAD
+	TestStringPrep(#$2001, [$20]); //U+2001	EM QUAD
+	TestStringPrep(#$2002, [$20]); //U+2002	EN SPACE
+	TestStringPrep(#$2003, [$20]); //U+2003	EM SPACE
+	TestStringPrep(#$2004, [$20]); //U+2004	THREE-PER-EM SPACE
+	TestStringPrep(#$2005, [$20]); //U+2005	FOUR-PER-EM SPACE
+	TestStringPrep(#$2006, [$20]); //U+2006	SIX-PER-EM SPACE
+	TestStringPrep(#$2007, [$20]); //U+2007	FIGURE SPACE
+	TestStringPrep(#$2008, [$20]); //U+2008	PUNCTUATION SPACE
+	TestStringPrep(#$2009, [$20]); //U+2009	THIN SPACE
+	TestStringPrep(#$200A, [$20]); //U+200A	HAIR SPACE
+	TestStringPrep(#$202F, [$20]); //U+202F	NARROW NO-BREAK SPACE
+	TestStringPrep(#$205F, [$20]); //U+205F	MEDIUM MATHEMATICAL SPACE
+	TestStringPrep(#$3000, [$20]); //U+3000	IDEOGRAPHIC SPACE
 end;
 
 procedure TScryptTests.ScryptBenchmarks;
@@ -1261,6 +1416,17 @@ begin
 	t('Password', 'NaCl', 80000, 64,
 			'4d dc d8 f6 0b 98 be 21 83 0c ee 5e f2 27 01 f9 64 1a 44 18 d0 4c 04 14 ae ff 08 87 6b 34 ab 56'+
 			'a1 d4 25 a1 22 58 33 54 9a db 84 1b 51 c9 b3 17 6a 27 2b de bb a1 d0 78 47 8f 62 b3 97 f3 3c 8d');
+end;
+
+procedure TScryptTests.TestStringPrep(const s: UnicodeString; Expected: array of Byte);
+var
+	preparedPassword: UnicodeString;
+	actual: TBytes;
+begin
+	preparedPassword := TScryptCracker.PasswordStringPrep(s);
+	actual := TScryptCracker.StringToUtf8(preparedPassword);
+
+	CheckEqualsBytes(Expected, actual, s);
 end;
 
 procedure TScryptTests.Test_PasswordHashing;
